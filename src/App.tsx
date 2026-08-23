@@ -35,10 +35,12 @@ import {
 } from './columnSchema'
 import {
   buildMergedColumns,
+  clearStoredMerges,
   collectColumnIds,
   ColumnMerge,
   loadStoredMerges,
   mergeIdFor,
+  setColumnMergeSheet,
   storeMerges,
 } from './columnMerge'
 import {
@@ -50,6 +52,7 @@ import {
 import { customFunctions, FormulaMap, recalcFormulas } from './formula'
 import { buildRowPermutation } from './useRowDrag'
 import {
+  clearColumnTypesForSheet,
   columnTypeOverrides,
   resolveColumnMeta,
   useColumnTypeOverridesVersion,
@@ -58,6 +61,7 @@ import { formatCellValue, isAttachmentType } from './columnTypes'
 import { FindHighlightProvider, findKey, type FindHighlight } from './tableFind'
 import FindBar from './components/FindBar'
 import {
+  clearFormattingForSheet,
   tableFormatting,
   FONT_SIZE_OPTIONS,
   FONT_FAMILY_OPTIONS,
@@ -71,7 +75,6 @@ import CustomFunctionsDropdown, {
 } from './components/CustomFunctionsDropdown'
 import ControlGroup from './components/ControlGroup'
 import ActionsRow from './components/ActionsRow'
-import PeekActions from './components/PeekActions'
 
 // Restore saved definitions before the first recalculation runs.
 loadStoredFunctions()
@@ -88,7 +91,10 @@ import useUndoHistory from './useUndoHistory'
 import GlobalSearch from './components/GlobalSearch'
 import PaginationControls from './components/PaginationControls'
 import CustomTable from './components/CustomTable'
-import DangerActions from './components/DangerActions'
+import {
+  ReloadButton,
+  DeleteAllButton,
+} from './components/SheetLifecycleActions'
 import ClearButton from './components/ClearButton'
 import StatsBar from './components/StatsBar'
 import FindReplaceDialog from './components/FindReplaceDialog'
@@ -107,7 +113,32 @@ import {
   loadCustomSheet,
   saveCustomSheet,
   clearCustomSheet,
+  setCustomSheetNamespace,
 } from './sheetPersistence'
+import { saveSheetNow } from './explicitSheetSave'
+import SaveSheetButton from './components/SaveSheetButton'
+import SheetTabs from './components/SheetTabs'
+import {
+  loadAccordionOpen,
+  storeAccordionOpen,
+} from './components/Accordion'
+import {
+  FIRST_SHEET_ID,
+  DEFAULT_SHEET_NAME,
+  emptySheetRegistry,
+  loadSheetRegistry,
+  saveSheetRegistry,
+  withNewSheet,
+  withRenamedSheet,
+  withoutSheet,
+  type SheetRegistry,
+} from './sheetRegistry'
+import {
+  clearSheetView,
+  loadSheetView,
+  saveSheetView,
+  toNumberMap,
+} from './sheetView'
 
 // ── Profiles / templates (optional, lazily-loaded site verticals) ──────
 // Behind a lazy boundary so a build that drops src/templates/* still works, and
@@ -192,6 +223,67 @@ type AppProps = {
 // the provider needlessly.
 const EMPTY_ATTACHMENT_CONFIG: AttachmentConfig = {}
 
+// How many empty rows "Delete everything" leaves behind — a blank sheet the user
+// starts typing into.
+const BLANK_SHEET_ROWS = 20
+
+/*
+ * Rows per page in the standalone app.
+ *
+ * It was 10, and 10 is smaller than a blank sheet: wiping to `BLANK_SHEET_ROWS`
+ * empty rows produced TWO pages, so the pager appeared — with its arrows, its
+ * page counter and its rows-per-page box — over a sheet with nothing in it at
+ * all. The toolbar already hides the pager below two pages (see the
+ * 'pagination' action), and this is the other half of the same fix: the default
+ * page has to be big enough that the empty sheet is one page. Sized a little
+ * above the blank sheet so the first few rows a user adds do not summon it
+ * either; real data past 25 rows still pages, which is what a pager is for.
+ */
+const STANDALONE_PAGE_SIZE = 25
+
+/**
+ * Point every sheet-namespaced store at one sheet, in one place.
+ *
+ * Four stores keep their own localStorage key and three of them are module
+ * singletons read from the render hot path (`resolveFormat` is called once per
+ * painted cell), so a sheet switch does not swap objects — it re-aims the
+ * singletons. This function is the ONLY place that knows all four need re-aiming
+ * together: forgetting one is how sheet 2 ends up wearing sheet 1's colours, and
+ * that bug stays invisible until a second sheet has content in it.
+ *
+ * Each `useSheet` flushes what it is holding under the OUTGOING key before it
+ * rehydrates from the incoming one, so this is safe to call with unsaved work on
+ * screen. The two plain-function stores (merges, custom sheet) have no in-memory
+ * state of their own — App holds it — so they only need the namespace moved;
+ * flushing THEIR outgoing bytes is the caller's job (see `moveActiveSheet`).
+ */
+function pointStoresAtSheet(sheetId: string): void {
+  tableFormatting.useSheet(sheetId)
+  columnTypeOverrides.useSheet(sheetId)
+  setColumnMergeSheet(sheetId)
+  setCustomSheetNamespace(sheetId)
+}
+
+/**
+ * Erase everything one sheet owns. Called only from the tab strip's delete,
+ * behind its confirm, and only for a sheet that is NOT the active one (the
+ * caller switches away first) — so there is no live in-memory state to clear,
+ * just five keys.
+ *
+ * Kept next to `pointStoresAtSheet` deliberately: they are the two halves of the
+ * same list, and a store added to one without the other either leaks a deleted
+ * sheet's bytes forever or bleeds them into the next sheet to claim the id.
+ * (Ids are never reused — see `nextOrdinal` — so the failure here is a leak, not
+ * a bleed. It is still a bug.)
+ */
+function eraseSheetStorage(sheetId: string): void {
+  clearCustomSheet(sheetId)
+  clearStoredMerges(sheetId)
+  clearFormattingForSheet(sheetId)
+  clearColumnTypesForSheet(sheetId)
+  clearSheetView(sheetId)
+}
+
 export const App = ({
   columns: columnsProp,
   data: dataProp,
@@ -223,9 +315,73 @@ export const App = ({
     [standalone],
   )
 
+  // ── Sheets (tabs) ──────────────────────────────────────────────────────────
+  //
+  // STANDALONE, AND NOT A VERTICAL. Two exclusions, for two different reasons:
+  //
+  //   • A library embed is one grid the host has placed on its own page: the
+  //     host owns the surrounding chrome, decides what a "document" is, and may
+  //     well render several `<SpreadsheetTable/>`s that would fight over one
+  //     registry. `lib.tsx` passes `standalone={false}`.
+  //   • A vertical (a profile-composed site sheet, selected by URL) already has
+  //     its own answer to "what is this sheet": it is composed fresh from the
+  //     selected profiles on every change and deliberately never persists — the
+  //     profile-change effect calls `clearCustomSheet()` precisely so it cannot.
+  //     Tabs would have to flush a sheet that mode has decided not to keep.
+  //
+  // Both fall back to the SINGLE FIXED namespace the app has always used
+  // (`FIRST_SHEET_ID`, i.e. the bare storage keys), so their persistence is
+  // byte-for-byte what it was before tabs existed, and neither renders the strip.
+  //
+  // The initializer POINTS THE FOUR NAMESPACED STORES at the active sheet, and it
+  // has to happen here — before `loadCustomSheet()` two lines down, before
+  // `loadStoredMerges()` further on, and before the first cell asks
+  // `resolveFormat` for its colours. Everything that reads a sheet's bytes runs
+  // after this line, which is why it is a `useState` initializer and not an
+  // effect: an effect runs after the first render has already read the wrong
+  // sheet. It is idempotent, so StrictMode's double-invoke is inert.
+  const sheetsEnabled = standalone && !activeVertical
+  // Whether the search + actions band under the tab strip is showing. Collapsing
+  // it is the one way to give the grid a large amount of the window back — the
+  // band is ~44px of chrome that a user reading hundreds of rows does not need
+  // on screen. Remembered across reloads through the same tiny localStorage
+  // helper the old Accordion used, so a user who works collapsed stays that way.
+  //
+  // Only reachable when the tab strip renders (`sheetsEnabled`), because the
+  // toggle lives on it. A library embed therefore always shows its chrome, which
+  // is right: a host that does not want the toolbar simply does not render one,
+  // and a hidden toolbar with no visible way back would be a trap.
+  const [chromeOpen, setChromeOpen] = React.useState(() =>
+    loadAccordionOpen('chrome', true),
+  )
+  const toggleChrome = React.useCallback(() => {
+    setChromeOpen((open) => {
+      const next = !open
+      storeAccordionOpen('chrome', next)
+      return next
+    })
+  }, [])
+
+  const [registry, setRegistry] = React.useState<SheetRegistry>(() => {
+    if (!sheetsEnabled) {
+      return {
+        version: 1,
+        sheets: [{ id: FIRST_SHEET_ID, name: DEFAULT_SHEET_NAME }],
+        activeId: FIRST_SHEET_ID,
+        nextOrdinal: 2,
+      }
+    }
+    const loaded = loadSheetRegistry()
+    pointStoresAtSheet(loaded.activeId)
+    return loaded
+  })
+  const activeSheetId = registry.activeId
+
   // A sheet the user previously built (Delete-all → filled in) survives reloads;
   // read it once at mount. When present it takes priority over the demo / profile
   // seed, so the user's own data is what comes back — not the sample rows.
+  // Namespaced: this reads the ACTIVE sheet's key, because the initializer above
+  // already pointed the stores at it.
   const persistedSheetRef = React.useRef(
     standalone ? loadCustomSheet() : null,
   )
@@ -446,20 +602,33 @@ export const App = ({
   // custom schema. The demo / profile sheet is intentionally never saved, so a
   // plain reload re-seeds the sample data while a sheet the user actually built
   // (rows + headers + formulas) survives the reload.
+  //
+  // The write names its sheet EXPLICITLY rather than letting the store use
+  // whichever sheet is active when the timer fires. React does clear the pending
+  // timer on a switch (every dep below changes), so in practice the stale timer
+  // never runs — but "sheet A's rows written under sheet B's key" is a
+  // data-corrupting bug, and it must not be contingent on effect-cleanup timing.
+  // Capturing the id in the closure makes it impossible instead of unlikely.
   React.useEffect(() => {
     if (!standalone || !isCustomSchema || !customColumns) return
+    const sheetId = activeSheetId
     const id = window.setTimeout(() => {
-      saveCustomSheet({
-        customColumns: customColumns as unknown as unknown[],
-        data: data as unknown as unknown[],
-        formulas,
-      })
+      saveCustomSheet(
+        {
+          customColumns: customColumns as unknown as unknown[],
+          data: data as unknown as unknown[],
+          formulas,
+        },
+        sheetId,
+      )
     }, 400)
     return () => window.clearTimeout(id)
-  }, [standalone, isCustomSchema, customColumns, data, formulas])
+  }, [standalone, isCustomSchema, customColumns, data, formulas, activeSheetId])
 
   // ── Actions-bar data operations ────────────────────────────────────────────
-  // "Delete all" is a full wipe → a blank sheet. Unlike deleting rows, this also
+  // "Delete all" is a full wipe of the ACTIVE SHEET (the current tab) → a blank
+  // sheet. It has never meant "every sheet", and since tabs landed its confirm
+  // says so. Unlike deleting rows, this also
   // clears the HEADERS: the schema is replaced with generic `Column 1..N` columns
   // the user renames + fills to store their own data. Everything scoped to the
   // old schema (formulas, merges, per-cell formatting, type overrides, uploaded
@@ -476,7 +645,7 @@ export const App = ({
     setCustomColumns(cols as unknown as typeof baseColumns)
     setImportedColumns(null)
     setRowHeights({})
-    setData(blankRows(20, ids) as unknown as Person[])
+    setData(blankRows(BLANK_SHEET_ROWS, ids) as unknown as Person[])
   }, [history])
 
   // The next free `colN` id for the blank sheet, so added columns never collide.
@@ -802,6 +971,37 @@ export const App = ({
     [effectiveBaseColumns],
   )
 
+  // Explicit Save (the actions-row button), the counterpart to the debounced
+  // autosave further up.
+  //
+  // It deliberately does NOT re-check that effect's `isCustomSchema` gate. The
+  // gate protects a BACKGROUND write from quietly adopting the demo data as if
+  // it were the user's; a press of Save is the user saying it IS theirs, so the
+  // gate has nothing left to protect and refusing here would make the button a
+  // silent no-op on the very sheet the app opens on. (The load path needs no
+  // change to match: App reads `loadCustomSheet()` unconditionally in
+  // standalone mode at mount, so whatever this writes is what comes back — as a
+  // `customColumns` sheet, which the autosave gate then accepts from that point
+  // on. Restore / Delete-all still call `clearCustomSheet()`.)
+  //
+  // It saves `effectiveBaseColumns`, the PRE-merge schema, exactly as the
+  // exporter does: column merges are a separate descriptor layer with its own
+  // localStorage mirror, as are per-cell formatting and column-type overrides,
+  // and each of those already persists itself on every change — Save must not
+  // write stale copies over them.
+  //
+  // Placed here rather than beside the autosave only because
+  // `effectiveBaseColumns` is declared above it.
+  const saveSheetExplicitly = React.useCallback(
+    () =>
+      saveSheetNow({
+        columns: effectiveBaseColumns as unknown as unknown[],
+        data: data as unknown as unknown[],
+        formulas,
+      }),
+    [effectiveBaseColumns, data, formulas],
+  )
+
   // Rename a column's header, whatever schema it came from.
   //
   // This used to touch `customColumns` only, so renaming was silently a no-op
@@ -841,9 +1041,14 @@ export const App = ({
 
   // Merges are plain descriptors, so they survive a reload like custom
   // functions do — but only for the default sheet (see above).
+  //
+  // Named sheet, same reasoning as the autosave above: `merges` and
+  // `activeSheetId` change in the SAME commit on a switch (both setters run in
+  // one handler), so passing the id from this render's scope can only ever write
+  // the merges that belong to it.
   React.useEffect(() => {
-    if (!activeVertical && standalone) storeMerges(merges)
-  }, [merges, activeVertical, standalone])
+    if (!activeVertical && standalone) storeMerges(merges, activeSheetId)
+  }, [merges, activeVertical, standalone, activeSheetId])
 
   const readOnlyColumns = React.useMemo(
     () => [
@@ -877,7 +1082,7 @@ export const App = ({
         pageSize:
           pageSizeProp ??
           (standalone
-            ? 10
+            ? STANDALONE_PAGE_SIZE
             : Math.max(10, dataProp?.length ?? 0, rowsProp ?? 0)),
       },
     },
@@ -1237,7 +1442,352 @@ export const App = ({
     [columns, readOnlyColumns],
   )
 
+  // ── Sheet switching ────────────────────────────────────────────────────────
+  //
+  // What "a sheet" is made of, and where each piece lives:
+  //
+  //   formatting / column types  → module singletons, re-aimed by `useSheet`
+  //   merges                     → App state + `tableColumnMerges:<id>`
+  //   rows / column defs / formulas → App state + `tt.customSheet.v1:<id>`
+  //   layout (order, widths, …)  → App + TanStack state + `tt.sheetView.v1:<id>`
+  //   imported clone schema, filters, query, selection → App state ONLY
+  //
+  // The last line is why there is an in-session stash as well as storage.
+  // `importedColumns` is a live TanStack column tree full of render functions —
+  // it cannot be JSON — and column filters / the query / the row selection are
+  // transient view state that deliberately does NOT persist (restoring a
+  // forgotten filter on a later visit is how a user concludes their data is
+  // gone). Keeping them in a Map for the life of the page makes a switch-and-back
+  // exactly lossless, while a reload still starts those three clean.
+  //
+  // So hydration has three tiers, most faithful first:
+  //   1. the session stash — this page has seen this sheet; restore it verbatim
+  //   2. localStorage      — a previous session's bytes
+  //   3. a blank sheet     — brand new tab, or a sheet that never saved anything
+  type SheetSession = {
+    data: Person[]
+    formulas: FormulaMap
+    customColumns: typeof baseColumns | null
+    importedColumns: typeof baseColumns | null
+    merges: ColumnMerge[]
+    rowHeights: Record<number, number>
+    columnOrder: ColumnOrderState
+    columnVisibility: Record<string, boolean>
+    columnSizing: Record<string, number>
+    columnPinning: ColumnPinningState
+    rowPinning: RowPinningState
+    grouping: GroupingState
+    sorting: SortingState
+    columnFilters: ColumnFiltersState
+    globalFilter: GlobalSearchValue
+    pageSize: number
+  }
+  const sheetStashRef = React.useRef(new Map<string, SheetSession>())
+
+  /** Everything the ACTIVE sheet is showing right now, as one plain object. */
+  const captureActiveSheet = React.useCallback((): SheetSession => {
+    const state = table.getState()
+    return {
+      data,
+      formulas,
+      customColumns,
+      importedColumns,
+      merges,
+      rowHeights,
+      columnOrder,
+      columnVisibility,
+      columnSizing: state.columnSizing,
+      columnPinning,
+      rowPinning,
+      grouping,
+      sorting: state.sorting,
+      columnFilters,
+      globalFilter,
+      pageSize: state.pagination.pageSize,
+    }
+  }, [
+    table,
+    data,
+    formulas,
+    customColumns,
+    importedColumns,
+    merges,
+    rowHeights,
+    columnOrder,
+    columnVisibility,
+    columnPinning,
+    rowPinning,
+    grouping,
+    columnFilters,
+    globalFilter,
+  ])
+
+  /** Push a captured sheet onto the screen. Every field is SET, never merged. */
+  const applySheetSession = React.useCallback(
+    (session: SheetSession) => {
+      setData(session.data)
+      setFormulas(session.formulas)
+      setCustomColumns(session.customColumns)
+      setImportedColumns(session.importedColumns)
+      setMerges(session.merges)
+      setRowHeights(session.rowHeights)
+      setColumnOrder(session.columnOrder)
+      setColumnVisibility(session.columnVisibility)
+      setColumnPinning(session.columnPinning)
+      setRowPinning(session.rowPinning)
+      setGrouping(session.grouping)
+      setColumnFilters(session.columnFilters)
+      setGlobalFilter(session.globalFilter)
+      // Sorting, sizing and page size are UNCONTROLLED — TanStack owns them —
+      // so they are written through the table, exactly as `importSnapshot` does.
+      table.setColumnSizing(session.columnSizing)
+      table.setSorting(session.sorting)
+      table.setPageSize(session.pageSize)
+      // Page 0: the incoming sheet's row count is unrelated to the outgoing
+      // one's, and landing on page 7 of a two-page sheet shows an empty grid.
+      table.setPageIndex(0)
+      // A selection belongs to the sheet it was made on — its row indices mean
+      // something else here.
+      setRowSelection({})
+    },
+    [table],
+  )
+
+  /**
+   * The sheet a tab that has nothing stored opens on: blank, never the demo.
+   *
+   * The demo data is a SAMPLE the app seeds itself with on a cold start; a new
+   * tab the user just asked for is theirs, and handing them 1000 rows of fake
+   * people to delete would be actively hostile. Matches `deleteAllTable`.
+   */
+  const blankSheetSession = React.useCallback((): SheetSession => {
+    const cols = blankColumns(6)
+    const ids = cols.map((c) => String(c.id))
+    return {
+      data: blankRows(BLANK_SHEET_ROWS, ids) as unknown as Person[],
+      formulas: {},
+      customColumns: cols as unknown as typeof baseColumns,
+      importedColumns: null,
+      merges: [],
+      rowHeights: {},
+      columnOrder: [],
+      columnVisibility: {},
+      columnSizing: {},
+      columnPinning: {},
+      rowPinning: { top: [], bottom: [] },
+      grouping: [],
+      sorting: [],
+      columnFilters: [],
+      globalFilter: emptyGlobalSearch,
+      pageSize: STANDALONE_PAGE_SIZE,
+    }
+  }, [])
+
+  /** Tier 2: rebuild a sheet from its stored bytes, filling the rest in blank. */
+  const loadSheetSession = React.useCallback(
+    (sheetId: string): SheetSession => {
+      const base = blankSheetSession()
+      const saved = loadCustomSheet(sheetId)
+      const view = loadSheetView(sheetId)
+      return {
+        ...base,
+        ...(saved
+          ? {
+              data: saved.data as unknown as Person[],
+              formulas: saved.formulas as FormulaMap,
+              customColumns: saved.customColumns as unknown as typeof baseColumns,
+            }
+          : {}),
+        merges: loadStoredMerges(sheetId),
+        rowHeights: toNumberMap(view?.rowHeights),
+        columnOrder: view?.columnOrder ?? base.columnOrder,
+        columnVisibility: view?.columnVisibility ?? base.columnVisibility,
+        columnSizing: view?.columnSizing ?? base.columnSizing,
+        columnPinning: {
+          left: view?.columnPinning?.left ?? [],
+          right: view?.columnPinning?.right ?? [],
+        },
+        rowPinning: {
+          top: view?.rowPinning?.top ?? [],
+          bottom: view?.rowPinning?.bottom ?? [],
+        },
+        grouping: view?.grouping ?? base.grouping,
+        sorting: view?.sorting ?? base.sorting,
+        pageSize: view?.pageSize ?? base.pageSize,
+      }
+    },
+    [blankSheetSession],
+  )
+
+  /**
+   * Move the app from one sheet to another. The registry is NOT touched here —
+   * callers commit it once, so an add or a delete cannot leave storage saying
+   * one thing and the singletons another.
+   *
+   * Order is the whole correctness argument, and it is: capture → flush →
+   * re-aim → hydrate.
+   *
+   *   FLUSH BEFORE RE-AIM. Everything the outgoing sheet owns is written while
+   *   the namespace still points at it. The debounced autosave has a 400ms
+   *   timer that the state changes below are about to cancel, so without an
+   *   explicit flush here the last few hundred milliseconds of typing would be
+   *   dropped on every tab click. Each write also names its sheet id outright,
+   *   so even a write that somehow arrived late could not land on the wrong key.
+   *
+   *   The flush deliberately ignores the autosave's `isCustomSchema` gate and
+   *   routes through `saveSheetNow` (the Save button's path), which serialises a
+   *   demo / profile schema's live column defs into plain JSON. That gate exists
+   *   so a BACKGROUND write never quietly adopts the sample data as the user's;
+   *   leaving one tab for another is not a background write, it is the user
+   *   saying "keep that, I'll be back", and a tab that came back empty because
+   *   its schema happened to be the built-in one would be indefensible. This
+   *   opens the same one-way door `explicitSheetSave.ts` documents: after a
+   *   reload the sheet returns as a `customColumns` sheet rather than re-seeding
+   *   the demo. Within a session the stash restores it verbatim, demo and all.
+   */
+  const moveActiveSheet = React.useCallback(
+    (fromId: string, toId: string) => {
+      if (fromId === toId) return
+
+      // ── capture ──
+      const outgoing = captureActiveSheet()
+      sheetStashRef.current.set(fromId, outgoing)
+
+      // ── flush, under the OUTGOING id ──
+      saveSheetNow(
+        {
+          columns: effectiveBaseColumns as unknown as unknown[],
+          data: outgoing.data as unknown as unknown[],
+          formulas: outgoing.formulas,
+        },
+        fromId,
+      )
+      storeMerges(outgoing.merges, fromId)
+      saveSheetView(fromId, {
+        columnOrder: outgoing.columnOrder,
+        columnSizing: outgoing.columnSizing,
+        columnVisibility: outgoing.columnVisibility,
+        columnPinning: {
+          left: outgoing.columnPinning.left ?? [],
+          right: outgoing.columnPinning.right ?? [],
+        },
+        rowPinning: {
+          top: (outgoing.rowPinning.top ?? []).map(String),
+          bottom: (outgoing.rowPinning.bottom ?? []).map(String),
+        },
+        sorting: outgoing.sorting.map((s) => ({ id: s.id, desc: !!s.desc })),
+        grouping: outgoing.grouping,
+        pageSize: outgoing.pageSize,
+        rowHeights: outgoing.rowHeights as unknown as Record<string, number>,
+      })
+
+      // ── re-aim: formatting, column types, merges, custom sheet ──
+      pointStoresAtSheet(toId)
+
+      // ── hydrate ──
+      applySheetSession(
+        sheetStashRef.current.get(toId) ?? loadSheetSession(toId),
+      )
+
+      // The undo stacks are keyed to the ROW INDICES of the sheet being left, so
+      // replaying them onto a different sheet's rows would corrupt it. There is
+      // no cross-sheet undo, and the delete confirm says so.
+      history.clear()
+      // Attachments are NOT released: the outgoing sheet's rows are still held
+      // in the stash and will be shown again if the user tabs back, and a
+      // revoked `blob:` URL is dead for good. They are released on unmount and
+      // by Delete-all / Reload, which are the paths that genuinely drop rows.
+    },
+    [
+      captureActiveSheet,
+      applySheetSession,
+      loadSheetSession,
+      effectiveBaseColumns,
+      history,
+    ],
+  )
+
+  /** Persist and adopt a new registry in one step. */
+  const commitRegistry = React.useCallback((next: SheetRegistry) => {
+    saveSheetRegistry(next)
+    setRegistry(next)
+  }, [])
+
+  const selectSheet = React.useCallback(
+    (id: string) => {
+      if (id === registry.activeId) return
+      if (!registry.sheets.some((sheet) => sheet.id === id)) return
+      moveActiveSheet(registry.activeId, id)
+      commitRegistry({ ...registry, activeId: id })
+    },
+    [registry, moveActiveSheet, commitRegistry],
+  )
+
+  const addSheet = React.useCallback(() => {
+    const { registry: next, sheet } = withNewSheet(registry)
+    // Nothing is stored under a freshly minted id — `nextOrdinal` guarantees it
+    // has never been used — so hydration falls to tier 3 and the tab opens blank.
+    moveActiveSheet(registry.activeId, sheet.id)
+    commitRegistry(next)
+  }, [registry, moveActiveSheet, commitRegistry])
+
+  const renameSheet = React.useCallback(
+    (id: string, name: string) => {
+      commitRegistry(withRenamedSheet(registry, id, name))
+    },
+    [registry, commitRegistry],
+  )
+
+  const deleteSheet = React.useCallback(
+    (id: string) => {
+      const next = withoutSheet(registry, id)
+      // `null` = this is the last sheet. The strip hides its "×" in that case, so
+      // reaching here means something else asked; refuse rather than render zero
+      // sheets or silently substitute a blank one.
+      if (!next) return
+      // Leave first if we are standing on it: `moveActiveSheet` flushes the
+      // outgoing sheet on the way out, which would resurrect the bytes we are
+      // about to erase — hence the erase comes AFTER, not before.
+      if (id === registry.activeId) moveActiveSheet(id, next.activeId)
+      sheetStashRef.current.delete(id)
+      eraseSheetStorage(id)
+      commitRegistry(next.registry)
+    },
+    [registry, moveActiveSheet, commitRegistry],
+  )
+
+  // Wipe EVERY sheet and start over with one blank one. The heaviest thing the
+  // app can do, so it lives in Settings behind its own confirm rather than in the
+  // toolbar next to Delete-all — those are deliberately different actions:
+  // Delete-all empties THIS sheet, this empties the whole workbook.
+  //
+  // Order matters, and it is the reverse of `deleteSheet`'s. There, we switch off
+  // a sheet before erasing it because the switch FLUSHES the outgoing sheet and
+  // would resurrect the bytes. Here every sheet is going, so there is nothing to
+  // switch to and nothing worth flushing: drop the in-memory stash FIRST so no
+  // later write can re-persist a dead sheet, then erase every namespace, then
+  // point the stores at the fresh sheet, then reset the React state that is still
+  // holding the old sheet's rows.
+  const resetAllSheets = React.useCallback(() => {
+    // Every id in the registry, including the active one.
+    for (const sheet of registry.sheets) eraseSheetStorage(sheet.id)
+    sheetStashRef.current.clear()
+    const fresh = emptySheetRegistry()
+    pointStoresAtSheet(fresh.activeId)
+    commitRegistry(fresh)
+    // Same blank-sheet reset the toolbar's Delete-all performs, applied to what
+    // is now the only sheet there is.
+    deleteAllTable()
+  }, [registry, commitRegistry, deleteAllTable])
+
   // ── View snapshot: the whole thing (data + non-data view) for export/share ──
+  //
+  // ACTIVE SHEET ONLY, deliberately. `AppSnapshot` is a versioned format (v2)
+  // with share links and .json files already in the wild; teaching it about tabs
+  // is a v3 change with its own import/merge questions ("does opening a 3-sheet
+  // file replace my 5 sheets?") and is a separate piece of work. Export, share
+  // and import therefore all mean "this tab", which is also what the buttons
+  // said before tabs existed.
   const buildSnapshot = React.useCallback(
     (): AppSnapshot => ({
       version: 1,
@@ -1382,6 +1932,44 @@ export const App = ({
     [history, table],
   )
 
+  // Restore the ACTIVE sheet's saved layout on a cold load, so a reload lands on
+  // the sheet arranged the way the user left it — the same layout a tab switch
+  // restores. Without this the two paths disagree: tabbing to a sheet would show
+  // your column widths while reloading onto the very same sheet would not.
+  //
+  // Skipped when a vertical's profile schema is in charge: those columns are
+  // composed fresh from the selected profiles, so an order stored against a
+  // different selection names columns that are not on screen.
+  //
+  // Declared BEFORE the shared-view effect below on purpose. Both are mount
+  // effects and React runs them in declaration order, so a snapshot arriving in
+  // the URL — which carries its own complete `tableState` — lands last and wins.
+  React.useEffect(() => {
+    if (!standalone || activeVertical) return
+    const view = loadSheetView(activeSheetId)
+    if (!view) return
+    if (view.columnOrder) setColumnOrder(view.columnOrder)
+    if (view.columnVisibility) setColumnVisibility(view.columnVisibility)
+    if (view.columnSizing) table.setColumnSizing(view.columnSizing)
+    if (view.columnPinning) {
+      setColumnPinning({
+        left: view.columnPinning.left ?? [],
+        right: view.columnPinning.right ?? [],
+      })
+    }
+    if (view.rowPinning) {
+      setRowPinning({
+        top: view.rowPinning.top ?? [],
+        bottom: view.rowPinning.bottom ?? [],
+      })
+    }
+    if (view.sorting) table.setSorting(view.sorting)
+    if (view.grouping) setGrouping(view.grouping)
+    if (view.pageSize) table.setPageSize(view.pageSize)
+    if (view.rowHeights) setRowHeights(toNumberMap(view.rowHeights))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Open a shared view file → the URL carries the snapshot; restore it on load.
   // Standalone demo only — a library embed must not read the host page's URL.
   React.useEffect(() => {
@@ -1464,7 +2052,7 @@ export const App = ({
     <FindHighlightProvider value={findHighlight}>
     <div
       data-jt="root"
-      className={`jt-root h-screen w-full max-w-full overflow-hidden box-border p-2 sm:p-4 flex flex-col gap-2 ${rootPartClass}`}
+      className={`jt-root h-screen w-full max-w-full overflow-hidden box-border p-1.5 sm:p-3 flex flex-col gap-1.5 ${rootPartClass}`}
     >
       {findBarOpen ? (
         <FindBar
@@ -1495,10 +2083,43 @@ export const App = ({
             onColumnHeaderClick={onColumnHeaderClick}
             onRowHeaderClick={onRowHeaderClick}
           >
-            <div className="flex h-full flex-col gap-2">
-              {/* The actions div: the query on the left, a contextual peek of
-                  quick actions + a toggle on the right; the full captioned action
-                  groups are revealed on expand. Collapsed by default. */}
+            <div className="flex h-full flex-col gap-1.5">
+              {/* The tab strip, above the toolbar: one 32px row, the same module
+                  as every control below it. Standalone, non-vertical only — see
+                  the two exclusions on the `registry` state. */}
+              {sheetsEnabled ? (
+                <SheetTabs
+                  sheets={registry.sheets}
+                  activeId={registry.activeId}
+                  onSelect={selectSheet}
+                  onAdd={addSheet}
+                  onRename={renameSheet}
+                  onDelete={deleteSheet}
+                  chromeOpen={chromeOpen}
+                  onToggleChrome={toggleChrome}
+                />
+              ) : null}
+              {/* The actions div: the query on the left, the contextual ops rail
+                  plus every general action on the right, laid out in ONE
+                  adaptive band that wraps onto a second line when it has to.
+                  At sm+ there is no expand toggle at all — every action below is
+                  on screen. Below sm, where a 375px row cannot hold eleven of
+                  them, ActionsRow keeps the first few of ACTION_PRIORITY inline
+                  and folds the rest behind one "⋮"; it renders that control only
+                  when there is genuinely something behind it. See ActionsRow.
+                  ── Why this is a flat list and not nested JSX ─────────────────
+                  Ordering used to be implicit in where a control was written:
+                  four icons in `peek`, three captioned groups in `children`, and
+                  the split decided what you could see at once (which is why
+                  Reload and Delete-all could never be on screen together). The
+                  order now lives in exactly one place — ACTION_PRIORITY in
+                  ActionsRow — and this array only says WHAT each action is. The
+                  order of the entries below is therefore irrelevant; they are
+                  written in priority order purely so the file reads the way the
+                  toolbar looks.
+                  An entry whose `node` is null is not applicable right now (no
+                  second page ⇒ no pager) and is dropped before ordering. */}
+              {chromeOpen || !sheetsEnabled ? (
               <ActionsRow
                 className="shrink-0"
                 query={
@@ -1511,119 +2132,123 @@ export const App = ({
                   </div>
                 }
                 ops={
-                  <div ref={setOpsSlot} className="min-w-0 empty:hidden" />
+                  <div ref={setOpsSlot} className="min-w-0 flex-1 empty:hidden" />
                 }
-                peek={
-                  <>
-                    <PeekActions
-                      onReload={refreshData}
-                      onDeleteAll={deleteAllTable}
-                    />
-                    <span
-                      aria-hidden="true"
-                      className="mx-0.5 h-6 border-l border-slate-200"
-                    />
-                    <button
-                      type="button"
-                      className="icon-btn-sm border border-amber-200 text-amber-600 sm:hover:bg-amber-50"
-                      onClick={() => setFindOpen(true)}
-                      title="Find & replace (Ctrl+H)"
-                      aria-label="Find and replace"
-                    >
-                      <Replace size={16} />
-                    </button>
-                    <CustomFunctionsDropdown />
-                    <button
-                      type="button"
-                      className="icon-btn-sm border border-slate-300 text-slate-600 sm:hover:bg-slate-100"
-                      onClick={() => setSettingsOpen(true)}
-                      title="Settings — profiles, saved queries, export & share"
-                      aria-label="Settings"
-                    >
-                      <Settings size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-btn-sm border border-sky-200 text-sky-600 sm:hover:bg-sky-50"
-                      onClick={openHelp}
-                      title="Keyboard shortcuts (?)"
-                      aria-label="Keyboard shortcuts"
-                    >
-                      <HelpCircle size={16} />
-                    </button>
-                  </>
-                }
-              >
-                {/* Selection formatting/merge lives entirely in the contextual
-                    strip now (no duplicate FORMAT bar). */}
-                {activeVertical && (
-                  <React.Suspense fallback={null}>
-                    <ControlGroup label="Profiles" tone="violet">
-                      <TemplateSelector
-                        vertical={activeVertical}
-                        selectedIds={selectedProfileIds}
-                        onChange={setSelectedProfileIds}
+                actions={[
+                  // Selection formatting / merge / insert / delete-row-or-column
+                  // live entirely in the contextual ops rail above; Clear is the
+                  // one selection action that stays a plain toolbar button.
+                  { id: 'clear', node: <ClearButton /> },
+                  // Save, Reload, Delete-all: the whole-sheet lifecycle cluster,
+                  // adjacent on purpose. Emerald / sky / rose keeps them apart at
+                  // a glance, and ActionsRow fences Delete with hairlines. Both
+                  // destructive ones confirm, with dialogs written to be told
+                  // apart — see SheetLifecycleActions.
+                  {
+                    id: 'save',
+                    node: <SaveSheetButton onSave={saveSheetExplicitly} />,
+                  },
+                  {
+                    id: 'reload',
+                    node: (
+                      <ReloadButton
+                        onReload={refreshData}
+                        // Only the standalone app keeps a saved copy to lose.
+                        clearsSavedSheet={standalone}
                       />
-                    </ControlGroup>
-                  </React.Suspense>
-                )}
-
-                <ControlGroup label="Pagination" tone="sky">
-                  <PaginationControls
-                    hasNextPage={table.getCanNextPage()}
-                    hasPreviousPage={table.getCanPreviousPage()}
-                    nextPage={table.nextPage}
-                    pageCount={table.getPageCount()}
-                    pageIndex={table.getState().pagination.pageIndex}
-                    pageSize={table.getState().pagination.pageSize}
-                    previousPage={table.previousPage}
-                    setPageIndex={table.setPageIndex}
-                    setPageSize={table.setPageSize}
-                  />
-                </ControlGroup>
-
-                <ControlGroup label="Tools" tone="emerald">
-                  <button
-                    type="button"
-                    className="icon-btn-sm border border-amber-200 text-amber-600 sm:hover:bg-amber-50"
-                    onClick={() => setFindOpen(true)}
-                    title="Find & replace (Ctrl+H)"
-                    aria-label="Find and replace"
-                  >
-                    <Replace size={16} />
-                  </button>
-                  <CustomFunctionsDropdown />
-                  <button
-                    type="button"
-                    className="icon-btn-sm border border-slate-300 text-slate-600 sm:hover:bg-slate-100"
-                    onClick={() => setSettingsOpen(true)}
-                    title="Settings — profiles, saved queries, export & share"
-                    aria-label="Settings"
-                  >
-                    <Settings size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn-sm border border-sky-200 text-sky-600 sm:hover:bg-sky-50"
-                    onClick={openHelp}
-                    title="Keyboard shortcuts (?)"
-                    aria-label="Keyboard shortcuts"
-                  >
-                    <HelpCircle size={16} />
-                  </button>
-                </ControlGroup>
-
-                {/* Danger zone — Clear the selection's contents (shown only when
-                    something is selected, before Restore), then the two heavy
-                    whole-table actions, red-bordered so they read as dangerous. */}
-                <ControlGroup label="Danger" tone="rose">
-                  <ClearButton />
-                  <DangerActions
-                    onDeleteAllTable={deleteAllTable}
-                    onRestoreTable={refreshData}
-                  />
-                </ControlGroup>
-              </ActionsRow>
+                    ),
+                  },
+                  {
+                    id: 'delete-all',
+                    node: <DeleteAllButton onDeleteAll={deleteAllTable} />,
+                  },
+                  {
+                    id: 'find',
+                    node: (
+                      <button
+                        type="button"
+                        className="icon-btn-sm border border-amber-200 text-amber-600 sm:hover:bg-amber-50"
+                        onClick={() => setFindOpen(true)}
+                        title="Find & replace (Ctrl+H)"
+                        aria-label="Find and replace"
+                      >
+                        <Replace size={14} />
+                      </button>
+                    ),
+                  },
+                  { id: 'functions', node: <CustomFunctionsDropdown /> },
+                  {
+                    id: 'settings',
+                    node: (
+                      <button
+                        type="button"
+                        className="icon-btn-sm border border-slate-300 text-slate-600 sm:hover:bg-slate-100"
+                        onClick={() => setSettingsOpen(true)}
+                        title="Settings — profiles, saved queries, export & share"
+                        aria-label="Settings"
+                      >
+                        <Settings size={14} />
+                      </button>
+                    ),
+                  },
+                  {
+                    id: 'help',
+                    node: (
+                      <button
+                        type="button"
+                        className="icon-btn-sm border border-sky-200 text-sky-600 sm:hover:bg-sky-50"
+                        onClick={openHelp}
+                        title="Keyboard shortcuts (?)"
+                        aria-label="Keyboard shortcuts"
+                      >
+                        <HelpCircle size={14} />
+                      </button>
+                    ),
+                  },
+                  {
+                    // Only when there is something to page through. A pager
+                    // reading "1 / 1" with all four arrows dead is pure noise,
+                    // and the rows-per-page box next to it is meaningless while
+                    // every row already fits on the one page. It reappears by
+                    // itself the moment a filter clears or rows are added and the
+                    // count goes above one. (The default page size is also large
+                    // enough that a fresh blank sheet is a single page — see
+                    // STANDALONE_PAGE_SIZE.)
+                    id: 'pagination',
+                    node:
+                      table.getPageCount() > 1 ? (
+                        <ControlGroup label="Pagination" tone="sky">
+                          <PaginationControls
+                            hasNextPage={table.getCanNextPage()}
+                            hasPreviousPage={table.getCanPreviousPage()}
+                            nextPage={table.nextPage}
+                            pageCount={table.getPageCount()}
+                            pageIndex={table.getState().pagination.pageIndex}
+                            pageSize={table.getState().pagination.pageSize}
+                            previousPage={table.previousPage}
+                            setPageIndex={table.setPageIndex}
+                            setPageSize={table.setPageSize}
+                          />
+                        </ControlGroup>
+                      ) : null,
+                  },
+                  {
+                    id: 'profiles',
+                    node: activeVertical ? (
+                      <React.Suspense fallback={null}>
+                        <ControlGroup label="Profiles" tone="violet">
+                          <TemplateSelector
+                            vertical={activeVertical}
+                            selectedIds={selectedProfileIds}
+                            onChange={setSelectedProfileIds}
+                          />
+                        </ControlGroup>
+                      </React.Suspense>
+                    ) : null,
+                  },
+                ]}
+              />
+              ) : null}
               <div className="min-h-0 flex-1">
                 <CustomTable
                   table={table}
@@ -1678,6 +2303,11 @@ export const App = ({
           setGlobalFilter(value as GlobalSearchValue)
           setSettingsOpen(false)
         }}
+        // Only where sheets exist. A library embed and a profile vertical both
+        // run on the single fixed namespace and have no workbook to reset, so
+        // they get no Danger zone tab rather than one that lies about scope.
+        onResetAllSheets={sheetsEnabled ? resetAllSheets : undefined}
+        sheetCount={registry.sheets.length}
       />
     </div>
     </FindHighlightProvider>

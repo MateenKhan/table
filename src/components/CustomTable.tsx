@@ -1213,6 +1213,11 @@ export function CustomTable<T extends RowData>({
         {onAddColumn ? (
           <td
             aria-hidden="true"
+            // Pure filler — it exists to keep the body's column count equal to
+            // the header's, and has no action of its own. `data-clears-selection`
+            // opts it into the click-away deselect that the rest of the <table>
+            // is exempt from (see useCellSelection).
+            data-clears-selection=""
             className={`border border-slate-200 ${
               isFrozen ? 'bg-slate-50' : 'bg-white'
             }`}
@@ -1573,6 +1578,11 @@ export function CustomTable<T extends RowData>({
                   // the letters stay locked to their columns through drag,
                   // resize, pin and hide.
                   data-col-id={col.id}
+                  // A letter cell that is neither a data column nor the select
+                  // column has no click action — it is empty header space, so
+                  // clicking it clears the selection like any other off-sheet
+                  // click rather than doing nothing at all.
+                  data-clears-selection={!isData && !isSelectCol ? '' : undefined}
                   title={isSelectCol ? 'Select all rows' : undefined}
                   className={`${gutterCell} px-1 transition-colors ${
                     colSelected || allRowsSelected

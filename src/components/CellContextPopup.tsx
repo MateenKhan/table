@@ -953,7 +953,7 @@ export function useContextActions<T extends RowData>(
           value={format.bg}
           onChange={setBg}
           swatches={BG_SWATCHES}
-          icon={<PaintBucket size={16} className="text-sky-600" />}
+          icon={<PaintBucket size={14} className="text-sky-600" />}
         />
       ),
     },
@@ -969,7 +969,7 @@ export function useContextActions<T extends RowData>(
           value={format.fg}
           onChange={setFg}
           swatches={FG_SWATCHES}
-          icon={<Baseline size={16} className="text-violet-600" />}
+          icon={<Baseline size={14} className="text-violet-600" />}
         />
       ),
     },
@@ -1001,7 +1001,7 @@ export function useContextActions<T extends RowData>(
             }`}
             onClick={() => toggleTextStyle(key)}
           >
-            <Icon size={16} aria-hidden="true" />
+            <Icon size={14} aria-hidden="true" />
           </button>
         )
       },
@@ -1450,7 +1450,7 @@ export function useContextActions<T extends RowData>(
           aria-label={isRowPinned ? 'Unfreeze row' : 'Freeze row'}
           onClick={onToggleRowPin}
         >
-          {isRowPinned ? <PinOff size={16} /> : <Pin size={16} />}
+          {isRowPinned ? <PinOff size={14} /> : <Pin size={14} />}
         </button>
       ),
     },
@@ -1655,13 +1655,13 @@ export function CellContextStrip<T extends RowData>(
         disabled={action.disabled}
         onClick={action.onSelect}
       >
-        <Icon size={16} aria-hidden="true" />
+        <Icon size={14} aria-hidden="true" />
       </button>
     )
   }
 
   return (
-    <div className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-sm text-slate-700">
+    <div className="flex w-full min-w-0 items-center gap-1.5 px-1.5 py-1.5 text-sm text-slate-700">
       {/* The eyebrow. `title` has been a prop — and passed by every call site —
           since the strip was a popup, but it was never destructured, so users
           had no confirmation of WHAT the strip was about to act on. It is the

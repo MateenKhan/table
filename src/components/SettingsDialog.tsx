@@ -73,9 +73,17 @@ export type SettingsDialogProps = {
   currentQuery: unknown
   /** Apply a saved query back into the builder. */
   onLoadQuery: (value: unknown) => void
+  /**
+   * Wipe every sheet and start over with one blank one. Optional: only the
+   * standalone app has sheets, so a library embed passes nothing and the tab
+   * does not render at all — an empty "Danger zone" would be worse than none.
+   */
+  onResetAllSheets?: () => void
+  /** How many sheets the reset would destroy, for the confirm. */
+  sheetCount?: number
 }
 
-type TabId = 'profiles' | 'queries' | 'export'
+type TabId = 'profiles' | 'queries' | 'export' | 'danger'
 type SortDir = 'asc' | 'desc'
 
 /* --------------------------------------------------------------- shared bits */
@@ -1039,6 +1047,72 @@ function ExportShareTab({
   )
 }
 
+/* ═════════════════════════════════════════════════════════════ danger zone */
+
+/**
+ * "Delete every sheet". Deliberately NOT in the toolbar beside Delete-all: those
+ * two read almost the same and destroy wildly different amounts. Delete-all
+ * empties the sheet you are looking at; this empties the workbook. Putting the
+ * bigger one behind a dialog, on its own tab, at the end of the tab strip, is
+ * the distance that difference deserves.
+ */
+function DangerZoneTab({
+  sheetCount,
+  onResetAllSheets,
+  onClose,
+}: {
+  sheetCount: number
+  onResetAllSheets: () => void
+  onClose: () => void
+}) {
+  const confirm = useConfirm()
+
+  const run = async () => {
+    const ok = await confirm({
+      title: 'Delete every sheet?',
+      message:
+        sheetCount > 1
+          ? `All ${sheetCount} sheets and everything in them are deleted, and you are left with one blank sheet.`
+          : 'This sheet and everything in it is deleted, and you are left with one blank sheet.',
+      details: [
+        'Every row, column and formula, on every sheet',
+        'All formatting, column types and merged columns',
+        'Sheet names, and the saved copy of each sheet in this browser',
+        'This cannot be undone — export first if you want a copy',
+      ],
+      confirmLabel: 'Delete everything',
+      tone: 'danger',
+    })
+    if (!ok) return
+    onResetAllSheets()
+    // Nothing here describes the new workbook, and leaving the dialog open on a
+    // "Danger zone" tab after it has fired reads as though it did not.
+    onClose()
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-4">
+        <h3 className="text-sm font-bold text-rose-700">Delete every sheet</h3>
+        <p className="mt-1 text-sm text-slate-600">
+          Removes {sheetCount > 1 ? `all ${sheetCount} sheets` : 'this sheet'} and
+          everything stored with {sheetCount > 1 ? 'them' : 'it'} in this browser,
+          leaving a single blank sheet. Use{' '}
+          <span className="font-semibold">Export &amp; share</span> first if you
+          want to keep a copy.
+        </p>
+        <button
+          type="button"
+          className="btn-danger-sm mt-3"
+          onClick={() => void run()}
+        >
+          Delete every sheet
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /* ══════════════════════════════════════════════════════════════ the dialog */
 
 export function SettingsDialog({
@@ -1049,6 +1123,8 @@ export function SettingsDialog({
   exportEmbedLimit,
   currentQuery,
   onLoadQuery,
+  onResetAllSheets,
+  sheetCount = 0,
 }: SettingsDialogProps) {
   const [tab, setTab] = React.useState<TabId>('profiles')
 
@@ -1062,6 +1138,15 @@ export function SettingsDialog({
     { id: 'queries', label: 'Saved queries', icon: <SlidersHorizontal size={14} /> },
     { id: 'export', label: 'Export & share', icon: <Share2 size={14} /> },
   ]
+  // Last, and only where sheets exist. Ordering is not cosmetic: the destructive
+  // tab sits furthest from the one the dialog opens on.
+  if (onResetAllSheets) {
+    tabs.push({
+      id: 'danger',
+      label: 'Danger zone',
+      icon: <Trash2 size={14} />,
+    })
+  }
 
   return (
     <Modal
@@ -1114,6 +1199,13 @@ export function SettingsDialog({
               buildSnapshot={buildSnapshot}
               onImportSnapshot={onImportSnapshot}
               exportEmbedLimit={exportEmbedLimit}
+              onClose={onClose}
+            />
+          )}
+          {tab === 'danger' && onResetAllSheets && (
+            <DangerZoneTab
+              sheetCount={sheetCount}
+              onResetAllSheets={onResetAllSheets}
               onClose={onClose}
             />
           )}

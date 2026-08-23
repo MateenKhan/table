@@ -173,14 +173,14 @@ export default function OverflowGroups({ children, className = '' }: Props) {
         <button
           ref={moreRef}
           type="button"
-          className="icon-btn shrink-0 border border-slate-300 text-slate-600 sm:hover:bg-slate-100"
+          className="icon-btn-sm shrink-0 border border-slate-300 text-slate-600 sm:hover:bg-slate-100"
           aria-label="More actions"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           title="More actions"
           onClick={() => setMenuOpen((v) => !v)}
         >
-          <MoreHorizontal size={18} />
+          <MoreHorizontal size={14} />
         </button>
       ) : null}
 

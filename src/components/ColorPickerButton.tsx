@@ -118,7 +118,7 @@ export function ColorPickerButton({
           ) : (
             <span
               aria-hidden="true"
-              className="h-4 w-4 rounded border border-slate-200"
+              className="h-3.5 w-3.5 rounded border border-slate-200"
               style={
                 value
                   ? { backgroundColor: value }

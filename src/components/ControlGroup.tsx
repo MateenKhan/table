@@ -34,7 +34,7 @@ type Props = {
  * A bordered box whose caption overlaps the top border, masking the line behind
  * it with a matching white background. `tone` colours BOTH the outline and the
  * caption so each group in the actions row is a named, colour-coded cluster —
- * e.g. "Pagination" (sky), "Tools" (emerald), "Danger" (rose).
+ * e.g. "Profiles" (violet), "Pagination" (sky), "Danger" (rose).
  */
 export function ControlGroup({
   label,
@@ -45,7 +45,7 @@ export function ControlGroup({
   const t = TONES[tone]
   return (
     <div
-      className={`relative mt-1 inline-flex items-center gap-1 rounded-lg border ${t.border} bg-white px-2 pb-1 pt-2${
+      className={`relative mt-1 inline-flex items-center gap-0.5 rounded-lg border ${t.border} bg-white px-1.5 pb-1 pt-2${
         className ? ` ${className}` : ''
       }`}
     >

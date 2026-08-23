@@ -4,9 +4,12 @@ import Tooltip from '../ui/Tooltip'
 import { useConfirm } from '../ui'
 
 // Clear the CONTENTS of the current selection — a standalone amber eraser that
-// sits just before the Danger group (i.e. before Restore). Rendered only when
-// something is selected, and confirms through the shared dialog before wiping,
-// so it never lives in two places or fires without asking.
+// leads the toolbar's action row, ahead of Save (see ACTION_PRIORITY in
+// ActionsRow). Rendered only when something is selected — the toolbar's own
+// `scope: 'selection'` filter says the same thing, and this guard stays because
+// it is what makes the component safe to drop anywhere, not just there — and it
+// confirms through the shared dialog before wiping, so it never lives in two
+// places or fires without asking.
 export default function ClearButton() {
   const selection = useCellSelection()
   const confirm = useConfirm()
@@ -27,11 +30,11 @@ export default function ClearButton() {
     <Tooltip label="Clear contents (Del)">
       <button
         type="button"
-        className="icon-btn border border-amber-200 text-amber-600 sm:hover:bg-amber-50"
+        className="icon-btn-sm border border-amber-200 text-amber-600 sm:hover:bg-amber-50"
         aria-label="Clear contents"
         onClick={clear}
       >
-        <Eraser size={16} aria-hidden="true" />
+        <Eraser size={14} aria-hidden="true" />
       </button>
     </Tooltip>
   )

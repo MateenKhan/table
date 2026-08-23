@@ -46,6 +46,7 @@
 // numeric fields.
 
 import React from 'react'
+import { FIRST_SHEET_ID, sheetScopedKey } from './sheetRegistry'
 
 export type Align = 'left' | 'center' | 'right'
 
@@ -90,7 +91,11 @@ export type Format = {
   borders?: Borders
 }
 
-const STORAGE_KEY = 'tableFormatting'
+// The PRE-TABS storage key, and still the exact key sheet 1 uses. Every other
+// sheet reads and writes `tableFormatting:<sheetId>`. See sheetRegistry.ts for
+// why the first sheet keeps the bare key (it is how a sheet that predates tabs
+// is migrated: by being found where it already is).
+const STORAGE_KEY_BASE = 'tableFormatting'
 
 const ALIGNS = new Set<Align>(['left', 'center', 'right'])
 
@@ -417,6 +422,13 @@ class FormattingStore {
   private listeners = new Set<() => void>()
   private revision = 0
   private loaded = false
+  // Which sheet (tab) this singleton is currently pointed at. Only `useSheet`
+  // moves it, and only after flushing what is loaded under the outgoing key.
+  private sheetId = FIRST_SHEET_ID
+
+  private get storageKey(): string {
+    return sheetScopedKey(STORAGE_KEY_BASE, this.sheetId)
+  }
 
   /** Bumped on every change - use as a `useSyncExternalStore` snapshot. */
   get version(): number {
@@ -453,7 +465,7 @@ class FormattingStore {
       const raw =
         typeof localStorage === 'undefined'
           ? null
-          : localStorage.getItem(STORAGE_KEY)
+          : localStorage.getItem(this.storageKey)
       if (!raw) return
       const parsed = JSON.parse(raw)
       if (!parsed || typeof parsed !== 'object') return
@@ -499,10 +511,52 @@ class FormattingStore {
       this.map.forEach((value, key) => {
         obj[key] = value
       })
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(obj))
+      localStorage.setItem(this.storageKey, JSON.stringify(obj))
     } catch {
       // Quota / private-mode denial: the in-memory store still works this session.
     }
+  }
+
+  /**
+   * Point this singleton at a different sheet (tab), flushing the outgoing one
+   * and rehydrating from the incoming one. A no-op when already there.
+   *
+   * ── The order below is load-bearing; each step prevents a specific bug ─────
+   *
+   * 1. Flush under the OUTGOING key, but ONLY `if (this.loaded)`. A store that
+   *    has never been read holds an empty map, and persisting THAT would write
+   *    `{}` over the outgoing sheet's real formatting — a switch would delete
+   *    the formatting of any sheet whose cells had not been painted yet this
+   *    session. Nothing in memory means nothing to flush, and the bytes already
+   *    on disk are the truth.
+   *
+   * 2. Every mutation already persists through `notify()`, so the flush is
+   *    belt-and-braces rather than the only write — but it is cheap and it
+   *    means the switch never depends on a listener having fired.
+   *
+   * 3. `loaded = false` + `map.clear()` before moving the id, so `ensureLoaded`
+   *    reads the incoming sheet rather than short-circuiting on the flag.
+   *
+   * 4. `notify()` at the end and NOT just `ensureLoaded()`. `ensureLoaded`
+   *    returns early when the incoming key holds nothing (`if (!raw) return`),
+   *    which skips its `syncStyleSheet()` — so switching from a sheet with bold
+   *    cells to a sheet with none would leave the OUTGOING sheet's <style>
+   *    element painting bold onto the incoming sheet's grid. That is precisely
+   *    the cross-sheet bleed this whole design exists to prevent, and it is
+   *    invisible until a second sheet has content. `notify()` always rebuilds
+   *    the stylesheet (to empty, here) and always bumps `version`, so every
+   *    `useSyncExternalStore` consumer re-renders against the new sheet.
+   *    Its `persist()` re-writes the bytes just read back to the same key —
+   *    identical content, so harmless.
+   */
+  useSheet(sheetId: string): void {
+    if (!sheetId || sheetId === this.sheetId) return
+    if (this.loaded) this.persist()
+    this.sheetId = sheetId
+    this.map.clear()
+    this.loaded = false
+    this.ensureLoaded()
+    this.notify()
   }
 
   /** The stored format for one scope key, as a fresh object (never shared). */
@@ -615,6 +669,22 @@ class FormattingStore {
 
 /** The single store the whole grid shares (mirrors `customFunctions`). */
 export const tableFormatting = new FormattingStore()
+
+/**
+ * Forget one sheet's stored formatting outright — its tab was deleted.
+ *
+ * A free function rather than a method because the sheet being erased is by
+ * definition NOT the one the singleton is pointed at (App switches away first),
+ * so there is no in-memory map to touch: only the bytes.
+ */
+export function clearFormattingForSheet(sheetId: string): void {
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.removeItem(sheetScopedKey(STORAGE_KEY_BASE, sheetId))
+  } catch {
+    /* ignore */
+  }
+}
 
 /** Convenience free function for the hot path in `CustomTable`. */
 export const resolveFormat = (columnId: string, dataRowIndex: number): Format =>

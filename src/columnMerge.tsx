@@ -14,6 +14,7 @@ import {
   TypeOptions,
 } from './columnTypes'
 import AttachmentCell from './components/AttachmentCell'
+import { FIRST_SHEET_ID, sheetScopedKey } from './sheetRegistry'
 
 // UI-driven column merging.
 //
@@ -68,13 +69,45 @@ export type ColumnMerge = CombineMerge | GroupMerge
 // Deterministic, so the same merge can never be added twice and so the derived
 // column keeps its identity (and therefore its width / pin state) across
 // re-renders.
-const MERGE_STORAGE_KEY = 'tableColumnMerges'
+// The PRE-TABS storage key, and still the exact key sheet 1 uses. Every other
+// sheet reads and writes `tableColumnMerges:<sheetId>`. See sheetRegistry.ts for
+// why the first sheet keeps the bare key.
+const MERGE_STORAGE_KEY_BASE = 'tableColumnMerges'
+
+// Which sheet (tab) the two functions below read and write for.
+//
+// Unlike `tableFormatting` / `columnTypeOverrides` there is no store object to
+// hang this on: merges live in React state in App and these are plain
+// load/store helpers. So the namespace is a module variable, and BOTH functions
+// take an explicit `sheetId` override as well. The override is not decoration —
+// App's merge autosave is an effect, and an effect that fires after the active
+// sheet has already moved would otherwise write the OUTGOING sheet's merges
+// under the INCOMING sheet's key. Passing the id the caller means removes that
+// window entirely.
+let activeMergeSheetId = FIRST_SHEET_ID
+
+/** Point the merge helpers at a sheet. Called by App's sheet switch. */
+export function setColumnMergeSheet(sheetId: string): void {
+  if (sheetId) activeMergeSheetId = sheetId
+}
+
+const mergeKey = (sheetId?: string) =>
+  sheetScopedKey(MERGE_STORAGE_KEY_BASE, sheetId ?? activeMergeSheetId)
+
+/** Forget one sheet's merges outright (the tab was deleted). */
+export function clearStoredMerges(sheetId?: string): void {
+  try {
+    window.localStorage.removeItem(mergeKey(sheetId))
+  } catch {
+    /* ignore */
+  }
+}
 
 // Descriptors are plain JSON, so they round-trip through localStorage. Anything
 // malformed is discarded rather than allowed to break the column tree on boot.
-export function loadStoredMerges(): ColumnMerge[] {
+export function loadStoredMerges(sheetId?: string): ColumnMerge[] {
   try {
-    const raw = window.localStorage.getItem(MERGE_STORAGE_KEY)
+    const raw = window.localStorage.getItem(mergeKey(sheetId))
     if (!raw) return []
 
     const parsed = JSON.parse(raw)
@@ -95,9 +128,9 @@ export function loadStoredMerges(): ColumnMerge[] {
   }
 }
 
-export function storeMerges(merges: ColumnMerge[]) {
+export function storeMerges(merges: ColumnMerge[], sheetId?: string) {
   try {
-    window.localStorage.setItem(MERGE_STORAGE_KEY, JSON.stringify(merges))
+    window.localStorage.setItem(mergeKey(sheetId), JSON.stringify(merges))
   } catch {
     // Storage blocked or full - merges still work for this session.
   }

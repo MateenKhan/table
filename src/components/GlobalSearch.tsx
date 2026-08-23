@@ -930,7 +930,7 @@ export function GlobalSearch<T extends RowData>({
       <div className="relative">
         {/* The token field: chips + the live input share one bordered box. */}
         <div
-          className="flex flex-wrap items-center gap-1.5 min-h-control-lg w-full cursor-text rounded-xl border border-slate-200 bg-white px-2 py-1.5 transition-colors focus-within:border-accent-400 focus-within:ring-2 focus-within:ring-accent-200"
+          className="flex flex-wrap items-center gap-1 min-h-control w-full cursor-text rounded-lg border border-slate-200 bg-white px-2 py-0.5 transition-colors focus-within:border-accent-400 focus-within:ring-2 focus-within:ring-accent-200"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) {
               e.preventDefault()
@@ -1217,7 +1217,7 @@ export function GlobalSearch<T extends RowData>({
           above as icon buttons; the AND/OR combinator lives inline between
           conditions (see ConnectorToggle). Only the combine hint remains here. */}
       {rules.length > 1 ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <span className="text-sm text-slate-500">
             Tap the AND / OR between conditions to change how they combine.
           </span>

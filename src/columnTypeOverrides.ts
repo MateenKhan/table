@@ -12,11 +12,15 @@
 import React from 'react'
 import type { ColumnType, TypeOptions } from './columnTypes'
 import { getColumnTypePreset } from './columnTypeRegistry'
+import { FIRST_SHEET_ID, sheetScopedKey } from './sheetRegistry'
 
 // What a column can be overridden with: a preset id, or an inline options patch.
 export type ColumnTypeOverride = string | TypeOptions
 
-const STORAGE_KEY = 'tableColumnTypeOverrides'
+// The PRE-TABS storage key, and still the exact key sheet 1 uses. Every other
+// sheet reads and writes `tableColumnTypeOverrides:<sheetId>`. See
+// sheetRegistry.ts for why the first sheet keeps the bare key.
+const STORAGE_KEY_BASE = 'tableColumnTypeOverrides'
 
 const COLUMN_TYPES: ReadonlySet<ColumnType> = new Set<ColumnType>([
   'text',
@@ -69,6 +73,12 @@ class ColumnTypeOverrideStore {
   private listeners = new Set<() => void>()
   private revision = 0
   private loaded = false
+  // Which sheet (tab) this singleton is pointed at; moved only by `useSheet`.
+  private sheetId = FIRST_SHEET_ID
+
+  private get storageKey(): string {
+    return sheetScopedKey(STORAGE_KEY_BASE, this.sheetId)
+  }
 
   /** Bumped on every change — use as a `useSyncExternalStore` snapshot. */
   get version(): number {
@@ -102,7 +112,7 @@ class ColumnTypeOverrideStore {
       const raw =
         typeof localStorage === 'undefined'
           ? null
-          : localStorage.getItem(STORAGE_KEY)
+          : localStorage.getItem(this.storageKey)
       if (!raw) return
       const parsed = JSON.parse(raw)
       if (!parsed || typeof parsed !== 'object') return
@@ -124,10 +134,31 @@ class ColumnTypeOverrideStore {
       this.map.forEach((value, key) => {
         obj[key] = value
       })
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(obj))
+      localStorage.setItem(this.storageKey, JSON.stringify(obj))
     } catch {
       // Quota / private-mode denial: the in-memory store still works.
     }
+  }
+
+  /**
+   * Point this singleton at a different sheet (tab). Mirrors
+   * `FormattingStore.useSheet` exactly — see the long note there for why each
+   * step is in the order it is. The short version:
+   *   • flush only `if (this.loaded)`, or a never-read store writes `{}` over
+   *     the outgoing sheet's real overrides.
+   *   • `notify()` at the end, so `version` bumps and every column re-resolves
+   *     its meta against the INCOMING sheet. Without it a sheet whose columns
+   *     were never retyped would keep rendering the previous sheet's currency
+   *     and date formats — cross-sheet bleed, invisible until sheet 2 has data.
+   */
+  useSheet(sheetId: string): void {
+    if (!sheetId || sheetId === this.sheetId) return
+    if (this.loaded) this.persist()
+    this.sheetId = sheetId
+    this.map.clear()
+    this.loaded = false
+    this.ensureLoaded()
+    this.notify()
   }
 
   /** The raw override for a column (a preset id or an options patch), or null. */
@@ -223,6 +254,20 @@ class ColumnTypeOverrideStore {
 
 /** The single override store the whole grid shares (mirrors `tableFormatting`). */
 export const columnTypeOverrides = new ColumnTypeOverrideStore()
+
+/**
+ * Forget one sheet's stored column types outright — its tab was deleted. Free
+ * function for the same reason `clearFormattingForSheet` is one: the sheet being
+ * erased is never the one the singleton is pointed at.
+ */
+export function clearColumnTypesForSheet(sheetId: string): void {
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.removeItem(sheetScopedKey(STORAGE_KEY_BASE, sheetId))
+  } catch {
+    /* ignore */
+  }
+}
 
 /** Convenience free function for folding an override onto a column's meta. */
 export const resolveColumnMeta = (

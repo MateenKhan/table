@@ -99,10 +99,13 @@
       sm:hover:bg-slate-100 active:scale-[0.97]
       disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100;
   }
-  /* Fixed 36px — compact toolbar context. */
+  /* Fixed 32px — the dense toolbar / ops-strip context, where a row of these
+     competes with the grid for vertical space and a cursor (not a finger) is
+     what reaches them. Anything a thumb must hit uses .icon-btn, which keeps
+     its 44px touch target at narrow widths (§7). */
   .icon-btn-sm {
     @apply inline-grid place-items-center rounded-lg text-slate-600
-      w-control h-control
+      w-control-sm h-control-sm
       transition-[color,background-color,transform]
       sm:hover:bg-slate-100 active:scale-[0.97]
       disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100;

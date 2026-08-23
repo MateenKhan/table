@@ -2232,6 +2232,74 @@ export function CellSelectionProvider<T extends RowData>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeKey])
 
+  // Clicking away from the grid drops the selection — the same thing Escape
+  // does, on the gesture people reach for first. Without it a selection made on
+  // the way to something else stayed lit indefinitely, and on a narrow screen it
+  // also kept the contextual ops strip holding a whole line of the toolbar (see
+  // the rail note in ActionsRow) with no obvious way to put it away.
+  //
+  // ── What counts as "away" ────────────────────────────────────────────────────
+  // Not simply "outside the grid". Several things that live outside it exist to
+  // ACT on the selection, and deselecting the moment they are touched would make
+  // them unusable — the pointer would clear the very thing the click was meant
+  // to operate on, before the handler ever ran:
+  //   • `[data-keeps-selection]` — the toolbar. Its contextual ops strip, the
+  //     Clear eraser and the format controls are all selection-scoped.
+  //   • `[data-popover-portal]` — the colour / border / number-format panels and
+  //     the "⋮" menus, which are portaled to <body> and so are not inside the
+  //     toolbar in the DOM even when they visually belong to it.
+  //   • `[role="dialog"]` — Modal, and with it every confirm. "Clear the
+  //     contents of 4 cells?" must still have those 4 cells when it is answered.
+  //
+  // `pointerdown` rather than `click`: it fires before focus moves and before
+  // the grid's own selecting handlers, and it is what the popovers above already
+  // listen on, so the ordering between them stays the one they were written for.
+  // `capture` so a handler that stops propagation cannot silently disable this.
+  React.useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      const el =
+        target instanceof Element ? target : (target.parentElement ?? null)
+      // Inside the <table> is the grid's own business: cells, headers, the row
+      // gutter, the add-row bar and the add-column "+" all live there and run
+      // their own selection handlers. Everything else in the scroll container is
+      // NOT — the empty area to the right of the last column and below the last
+      // row is container, not table, and a click there is a click off the sheet.
+      // Testing the container instead of the table was the bug: that whitespace
+      // is usually the largest click target on screen, and it did nothing.
+      // Inert spots INSIDE the table opt back in with `data-clears-selection`
+      // (empty header cells, the trailing spacer beside the add-column "+").
+      // Checked first: they are inside the <table> the next line exempts.
+      if (!el?.closest('[data-clears-selection]')) {
+        if (el?.closest('table')) return
+      }
+      if (
+        el?.closest(
+          '[data-keeps-selection],[data-popover-portal],[role="dialog"]',
+        )
+      ) {
+        return
+      }
+      // Nothing to do when nothing is selected — this runs on every pointerdown
+      // in the document, so the common case has to stay free.
+      if (
+        !regionsRef.current.length &&
+        !anchorRef.current &&
+        !multiAnchorRef.current
+      ) {
+        return
+      }
+      setRegions([])
+      multiAnchorRef.current = null
+      setAnchor(null)
+      setFocus(null)
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () =>
+      document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [])
+
   // Visit every distinct (dataIndex, columnId) the selection actually covers,
   // walking each region so non-contiguous multi-select never spills into the
   // gaps of its bounding box. Skip columns and grouped rows drop out. A callback

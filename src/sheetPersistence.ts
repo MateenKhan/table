@@ -22,8 +22,32 @@
 
 import { migrateLegacyA1Formulas } from './formula'
 import { dataColumnIdsFromDefs } from './columnOrder'
+import { FIRST_SHEET_ID, sheetScopedKey } from './sheetRegistry'
 
-const KEY = 'tt.customSheet.v1'
+// The PRE-TABS storage key, and still the exact key sheet 1 uses. Every other
+// sheet reads and writes `tt.customSheet.v1:<sheetId>`. See sheetRegistry.ts for
+// why the first sheet keeps the bare key — that aliasing IS the migration for a
+// sheet built before tabs existed.
+const KEY_BASE = 'tt.customSheet.v1'
+
+// Which sheet (tab) the functions below default to.
+//
+// Every one of them ALSO takes an explicit `sheetId`, and App's debounced
+// autosave passes one. That is not belt-and-braces: the autosave is a 400ms
+// `setTimeout`, so between scheduling and firing the user can switch tabs. React
+// does clear the pending timer (the effect's deps all change on a switch), but
+// depending on that for correctness would make a data-corrupting bug — sheet A's
+// rows written under sheet B's key — contingent on effect-cleanup timing. An
+// explicit id closes the window by construction.
+let activeSheetId = FIRST_SHEET_ID
+
+/** Point the default namespace at a sheet. Called by App's sheet switch. */
+export function setCustomSheetNamespace(sheetId: string): void {
+  if (sheetId) activeSheetId = sheetId
+}
+
+const sheetKey = (sheetId?: string) =>
+  sheetScopedKey(KEY_BASE, sheetId ?? activeSheetId)
 
 // Bumped whenever the meaning of a stored payload changes. The storage KEY is
 // deliberately NOT bumped with it — an old sheet has to be found before it can
@@ -44,9 +68,9 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 /** The saved user sheet, or `null` when there is none / it is unreadable. */
-export function loadCustomSheet(): PersistedSheet | null {
+export function loadCustomSheet(sheetId?: string): PersistedSheet | null {
   try {
-    const raw = localStorage.getItem(KEY)
+    const raw = localStorage.getItem(sheetKey(sheetId))
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (!isObject(parsed)) return null
@@ -84,25 +108,46 @@ export function loadCustomSheet(): PersistedSheet | null {
   }
 }
 
-/** Write the user's sheet. Quota / serialisation failures are swallowed. */
-export function saveCustomSheet(sheet: Omit<PersistedSheet, 'version'>): void {
+/**
+ * Write the user's sheet and REPORT whether the bytes actually landed.
+ *
+ * The autosave path below deliberately does not care (a debounced background
+ * write that quietly loses a tick is better than a thrown render), but an
+ * explicit, user-pressed Save does: the user is owed a truthful "saved" or
+ * "couldn't save" instead of a silent no-op. Same defensive try/catch, just
+ * with the outcome handed back rather than dropped on the floor.
+ */
+export function trySaveCustomSheet(
+  sheet: Omit<PersistedSheet, 'version'>,
+  sheetId?: string,
+): boolean {
   try {
     localStorage.setItem(
-      KEY,
+      sheetKey(sheetId),
       JSON.stringify({
         version: SHEET_VERSION,
         ...sheet,
       } satisfies PersistedSheet),
     )
+    return true
   } catch {
-    /* out of quota or non-serialisable — drop silently */
+    /* out of quota or non-serialisable */
+    return false
   }
 }
 
+/** Write the user's sheet. Quota / serialisation failures are swallowed. */
+export function saveCustomSheet(
+  sheet: Omit<PersistedSheet, 'version'>,
+  sheetId?: string,
+): void {
+  trySaveCustomSheet(sheet, sheetId)
+}
+
 /** Forget any saved user sheet (used by Restore, which returns to the demo). */
-export function clearCustomSheet(): void {
+export function clearCustomSheet(sheetId?: string): void {
   try {
-    localStorage.removeItem(KEY)
+    localStorage.removeItem(sheetKey(sheetId))
   } catch {
     /* ignore */
   }

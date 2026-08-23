@@ -79,15 +79,18 @@ export default {
         micro: ['10px', '14px'],
         '2xs': ['11px', '16px'],
       },
-      // Canonical control sizes, both square (§7): control 36px (pointer),
-      // control-lg 44px (HIG touch minimum). Reach for min-h-control / w-control
-      // rather than a hand-picked min-h-[Npx].
+      // Canonical control sizes, all square (§7): control-sm 32px (the dense
+      // toolbar / ops strip, cursor-only), control 36px (pointer), control-lg
+      // 44px (HIG touch minimum). Reach for min-h-control / w-control rather
+      // than a hand-picked min-h-[Npx].
       spacing: {
         control: '36px',
+        'control-sm': '32px',
         'control-lg': '44px',
       },
       minHeight: {
         control: '36px',
+        'control-sm': '32px',
         'control-lg': '44px',
       },
       transitionTimingFunction: {
