@@ -34,6 +34,11 @@
 // whole file exists to guarantee: no sheet may ever read another sheet's data.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The collision key, borrowed from the engine on purpose: "two names are the
+// same sheet" has to mean the same thing here and at `@` resolution time, or
+// uniqueness lets through a pair the formula language cannot tell apart.
+import { sheetNameKey } from './formula'
+
 /**
  * The id of the sheet that owns the pre-tabs, un-suffixed storage keys.
  * Reserved forever — `nextOrdinal` starts past it (see `EMPTY_REGISTRY`).
@@ -99,11 +104,61 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
 
-/** Trim / clamp a tab name; empty input falls back to `fallback`. */
+/**
+ * Trim and clamp a tab name; empty input falls back to `fallback`.
+ *
+ * ── What is NOT done here any more, and why ─────────────────────────────────
+ * This used to strip every character a formula identifier cannot hold, so
+ * `Q1 Sales` became `Q1Sales` and `2024` became `_2024`. That was the app
+ * restricting the user's data to work around its own grammar, and it is gone:
+ * `@name(expr)` now takes everything between the `@` and the first `(`, plus a
+ * `'…'` form for the rest (see the `@sheet(expr)` notes in formula.ts), so
+ * there is no character a name can hold that a formula cannot name.
+ *
+ * What remains is housekeeping that has nothing to do with the grammar: the
+ * trim (a tab whose label is padding reads as blank, and `sheetNameKey` trims
+ * anyway, so an untrimmed name could never be told apart from its trimmed
+ * twin) and the length clamp (a guard on hand-edited or pasted registries).
+ * UNIQUENESS is the only real rule, and `uniqueSheetName` is where it lives.
+ *
+ * Coercion, not rejection: a name arrives here from a rename box, from a saved
+ * registry written by an older build, or from a corrupt payload. Refusing would
+ * mean either losing the sheet or showing an error for data the user never typed.
+ * The INTERACTIVE rename does reject — see `SheetTabs` — because there is
+ * someone there to tell.
+ */
 export function normalizeSheetName(name: unknown, fallback: string): string {
   if (typeof name !== 'string') return fallback
-  const trimmed = name.trim().slice(0, MAX_NAME_LENGTH)
-  return trimmed || fallback
+  return name.trim().slice(0, MAX_NAME_LENGTH).trim() || fallback
+}
+
+/**
+ * `name`, or `name2` / `name3` / … if another sheet already answers to it.
+ *
+ * Uniqueness is not cosmetic once `@` exists: two tabs called `Data` make
+ * `@Data(a1)` ambiguous, and whichever one the resolver happens to reach first
+ * would silently become the answer. It is now the ONLY rule on a name, which
+ * makes it load-bearing rather than tidy.
+ *
+ * The collision key is imported from the engine rather than re-declared here.
+ * A local copy is how this bug gets reintroduced: if this file folded
+ * whitespace and the resolver did not (or the reverse), two sheets could be
+ * created that `@` cannot tell apart — the exact thing uniqueness exists to
+ * prevent. One definition, one answer.
+ */
+export function uniqueSheetName(
+  name: string,
+  sheets: readonly SheetInfo[],
+  selfId?: string,
+): string {
+  const taken = new Set(
+    sheets.filter((s) => s.id !== selfId).map((s) => sheetNameKey(s.name)),
+  )
+  if (!taken.has(sheetNameKey(name))) return name
+  for (let n = 2; ; n++) {
+    const candidate = `${name}${n}`.slice(0, MAX_NAME_LENGTH)
+    if (!taken.has(sheetNameKey(candidate))) return candidate
+  }
 }
 
 /**
@@ -133,9 +188,18 @@ export function loadSheetRegistry(): SheetRegistry {
       const id = typeof entry.id === 'string' ? entry.id.trim() : ''
       if (!id || seen.has(id)) continue
       seen.add(id)
+      // Deduplicated on the way in, not just on rename. A registry can arrive
+      // hand-edited, or written by a build with different rules, holding two
+      // tabs that `@` cannot tell apart ("Data" and "data") — and `@data`
+      // would then silently resolve to whichever came first. There is no user
+      // here to ask, so this path auto-suffixes; the interactive rename box
+      // refuses instead (see `SheetTabs`), because there is.
       sheets.push({
         id,
-        name: normalizeSheetName(entry.name, `Sheet ${sheets.length + 1}`),
+        name: uniqueSheetName(
+          normalizeSheetName(entry.name, `Sheet ${sheets.length + 1}`),
+          sheets,
+        ),
       })
     }
     if (!sheets.length) return emptyRegistry()
@@ -184,7 +248,10 @@ export function withNewSheet(registry: SheetRegistry): {
   sheet: SheetInfo
 } {
   const ordinal = registry.nextOrdinal
-  const sheet: SheetInfo = { id: `s${ordinal}`, name: `Sheet ${ordinal}` }
+  const sheet: SheetInfo = {
+    id: `s${ordinal}`,
+    name: uniqueSheetName(`Sheet ${ordinal}`, registry.sheets),
+  }
   return {
     registry: {
       ...registry,
@@ -206,7 +273,14 @@ export function withRenamedSheet(
     ...registry,
     sheets: registry.sheets.map((sheet) =>
       sheet.id === sheetId
-        ? { ...sheet, name: normalizeSheetName(name, sheet.name) }
+        ? {
+            ...sheet,
+            name: uniqueSheetName(
+              normalizeSheetName(name, sheet.name),
+              registry.sheets,
+              sheetId,
+            ),
+          }
         : sheet,
     ),
   }

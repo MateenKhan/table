@@ -23,6 +23,8 @@ import { useThumbnailMetrics } from '../thumbnailSize'
 import { resolveFormat } from '../formatting'
 import { extractReferences } from '../formula'
 import { formulaRefs } from '../formulaRefs'
+import { crossSheet } from '../crossSheet'
+import { highlightFormula, type HighlightKind } from '../formulaHighlight'
 import {
   beginSession,
   cycleAtCaret,
@@ -33,6 +35,33 @@ import {
   writeTarget,
 } from '../formulaPointing'
 import FileDropzone from './FileDropzone'
+
+/**
+ * Colours for the live formula overlay (see `formulaHighlight.ts` and the
+ * `formulaOverlay` block further down).
+ *
+ * `sheet` and `ref` are the two the user asked for and are the two that carry
+ * MEANING: a token wears one only when it resolved to a real sheet / a real
+ * column. `plain` is deliberately absent — an unresolved token inherits the
+ * cell's own text colour, so "not understood" looks exactly like ordinary
+ * typing rather than like a second kind of highlight.
+ *
+ * Chosen against the light cell background the editor always paints on
+ * (`--jt-*` theming does not reach inside the input), and kept saturated enough
+ * to read at the 12–13px the grid uses.
+ */
+const HIGHLIGHT_COLORS: Partial<Record<HighlightKind, string>> = {
+  sheet: '#7c3aed',
+  // Rose, the danger tone used everywhere else in this app: an `@name(` that
+  // names a real tab but truncated at a `(` in the tab's own name. It is the
+  // one wrong reference with a specific fix, so it gets a colour of its own
+  // rather than the grey that just means "not understood".
+  'sheet-quote': '#e11d48',
+  ref: '#2563eb',
+  func: '#0f766e',
+  number: '#b45309',
+  operator: '#64748b',
+}
 
 // The arrow keys point mode takes over, and the row/column step each one means.
 const ARROW_DELTA: Record<string, [number, number]> = {
@@ -291,10 +320,18 @@ export function EditableCell<T extends RowData>({
   // outline them live as they are typed; a non-formula draft clears it. Only the
   // editing cell ever writes the shared store (this body no-ops otherwise), so a
   // non-editing cell can never stomp the active draft's highlight.
+  //
+  // References inside `@other(…)` are resolved to a sheet id and published with
+  // it, so the store can drop the ones that land on a sheet that is not on
+  // screen — see `formulaRefs.ts`. Painting them locally would claim the
+  // formula reads a cell it does not read.
   React.useEffect(() => {
     if (!isEditing) return
     if (draft.trimStart().startsWith('=')) {
-      formulaRefs.set(extractReferences(draft, dataIndex))
+      formulaRefs.set(
+        extractReferences(draft, dataIndex, crossSheet.resolveName),
+        crossSheet.activeSheetId,
+      )
     } else {
       formulaRefs.clear()
     }
@@ -455,6 +492,48 @@ export function EditableCell<T extends RowData>({
     selection.stopEditing()
   }
 
+  /* ------------------------------------------- live formula highlighting */
+  //
+  // The user asked for `@sheet1` to be highlighted "when understood as the
+  // sheet", and the same for cells. An <input> cannot colour parts of its own
+  // value, so this is the standard overlay: an absolutely-positioned div holds
+  // the same text in coloured <span>s, and the real input sits on top of it
+  // with TRANSPARENT text but a visible caret. The input keeps every bit of its
+  // behaviour — caret, selection, IME, point mode, blur/commit — because it is
+  // still the thing being typed into; only its glyphs are hidden.
+  //
+  // The whole illusion depends on the two layers laying out identically, so
+  // every property that affects text metrics is set from the SAME values on
+  // both, and the overlay copies the input's `scrollLeft` on every keystroke
+  // and scroll (a formula longer than the cell scrolls the input; without the
+  // sync the colours would slide out from under the text).
+  //
+  // Only ever mounted while this cell is being edited with a `=` draft. A
+  // non-formula edit renders exactly the input it always did.
+  const showOverlay = isEditing && draft.trimStart().startsWith('=')
+  const overlayRef = React.useRef<HTMLDivElement>(null)
+  const syncOverlayScroll = React.useCallback(() => {
+    const input = inputRef.current
+    const overlay = overlayRef.current
+    if (input && overlay) overlay.scrollLeft = input.scrollLeft
+  }, [])
+  // Runs after the draft renders, so the overlay is already showing the new
+  // text when its scroll offset is set — doing this in an ordinary effect would
+  // show one frame of misaligned colour on every character typed.
+  React.useLayoutEffect(() => {
+    if (showOverlay) syncOverlayScroll()
+  }, [showOverlay, draft, syncOverlayScroll])
+
+  const textStyle: React.CSSProperties = {
+    // Store colour/alignment/font win over the type default so a
+    // column/row/cell format set from the popup shows on editor cells too,
+    // not just the bg.
+    color: fmt.fg || '#0f172a',
+    textAlign: fmt.align ?? alignmentFor(typeOptions?.type),
+    ...(fmt.fontSize ? { fontSize: fmt.fontSize } : {}),
+    ...(fmt.fontFamily ? { fontFamily: fmt.fontFamily } : {}),
+  }
+
   const textInput = (
     <input
       ref={inputRef}
@@ -469,17 +548,27 @@ export function EditableCell<T extends RowData>({
       // cursor owns, so the session cannot survive it.
       onMouseDown={endPointing}
       onBlur={onInputBlur}
+      onScroll={showOverlay ? syncOverlayScroll : undefined}
       className={`w-full bg-transparent outline-none${
         formula && !isEditing ? ' italic' : ''
       }`}
       style={{
-        // Store colour/alignment/font win over the type default so a
-        // column/row/cell format set from the popup shows on editor cells too,
-        // not just the bg.
-        color: fmt.fg || '#0f172a',
-        textAlign: fmt.align ?? alignmentFor(typeOptions?.type),
-        ...(fmt.fontSize ? { fontSize: fmt.fontSize } : {}),
-        ...(fmt.fontFamily ? { fontFamily: fmt.fontFamily } : {}),
+        ...textStyle,
+        // The overlay draws the glyphs; the input keeps the caret. `caretColor`
+        // has to be restated because `color: transparent` would take it too.
+        // `position`/`zIndex` are applied ONLY while the overlay is up, so a
+        // cell that is not editing a formula keeps the exact stacking it had
+        // before — the grid paints several absolute layers into this same <td>
+        // (border overlay, reference highlight, selection decoration) and their
+        // order is load bearing.
+        ...(showOverlay
+          ? {
+              color: 'transparent',
+              caretColor: fmt.fg || '#0f172a',
+              position: 'relative' as const,
+              zIndex: 1,
+            }
+          : null),
         // Let mouse events fall through to the <td> so click-drag selection and
         // the fill handle keep working; the input is only interactive in edit
         // mode.
@@ -488,6 +577,66 @@ export function EditableCell<T extends RowData>({
       }}
     />
   )
+
+  const formulaOverlay = showOverlay ? (
+    <div
+      ref={overlayRef}
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre"
+      style={{
+        ...textStyle,
+        // The positioned ancestor is the <td>, so `inset-0` covers its PADDING
+        // box while the input starts at the content box. `px-2` (0.5rem) is the
+        // <td>'s horizontal padding in `CustomTable`; restating it here is what
+        // puts the two texts on the same left edge. Vertical padding needs no
+        // match — it is symmetric, so centring over either box is the same
+        // line, which is also what the <td>'s `vertical-align: middle` does to
+        // the input.
+        boxSizing: 'border-box',
+        paddingLeft: '0.5rem',
+        paddingRight: '0.5rem',
+        display: 'flex',
+        alignItems: 'center',
+        zIndex: 0,
+      }}
+    >
+      <span className="whitespace-pre" style={{ minWidth: '100%' }}>
+        {highlightFormula(draft, {
+          resolveSheet: crossSheet.resolveName,
+          columnsOfSheet: (name) => crossSheet.columnIdsFor(name),
+        }).map((token, index) => (
+          <span
+            // Index keys are safe here: the list is rebuilt from scratch on
+            // every keystroke and nothing in it holds state.
+            key={index}
+            style={
+              HIGHLIGHT_COLORS[token.kind]
+                ? {
+                    color: HIGHLIGHT_COLORS[token.kind],
+                    fontWeight:
+                      token.kind === 'sheet' || token.kind === 'sheet-quote'
+                        ? 600
+                        : undefined,
+                    // The wavy underline is the second channel: colour alone
+                    // would not tell a red-green colourblind user that this
+                    // reference is the broken one.
+                    ...(token.kind === 'sheet-quote'
+                      ? {
+                          textDecoration: 'underline',
+                          textDecorationStyle: 'wavy' as const,
+                          textDecorationSkipInk: 'none' as const,
+                        }
+                      : null),
+                  }
+                : undefined
+            }
+          >
+            {token.text}
+          </span>
+        ))}
+      </span>
+    </div>
+  ) : null
 
   /* ------------------------------------------------------------ date editor */
 
@@ -516,6 +665,7 @@ export function EditableCell<T extends RowData>({
 
     return (
       <>
+        {formulaOverlay}
         {textInput}
         {isEditing ? (
           <div
@@ -648,12 +798,23 @@ export function EditableCell<T extends RowData>({
         overlayLabel="Drop file"
         className="w-full"
       >
+        {/* No formula overlay here. The dropzone is its own positioned box
+            (`relative w-full`, no padding), so the overlay's `inset-0` would
+            measure from a different origin than in every other cell and the
+            colours would sit 8px off the text. Mixed / attachment columns are
+            `#ERROR` for arithmetic anyway, so a formula typed here has nothing
+            to highlight that would be worth showing. */}
         {textInput}
       </FileDropzone>
     )
   }
 
-  return textInput
+  return (
+    <>
+      {formulaOverlay}
+      {textInput}
+    </>
+  )
 }
 
 export default EditableCell

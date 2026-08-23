@@ -49,7 +49,13 @@ import {
   globalSearchFilter,
   isGlobalSearchEmpty,
 } from './globalSearch'
-import { customFunctions, FormulaMap, recalcFormulas } from './formula'
+import {
+  customFunctions,
+  FormulaMap,
+  recalcFormulas,
+  renameSheetInFormulas,
+} from './formula'
+import { crossSheet, useCrossSheetVersion } from './crossSheet'
 import { buildRowPermutation } from './useRowDrag'
 import {
   clearColumnTypesForSheet,
@@ -1484,6 +1490,24 @@ export const App = ({
   }
   const sheetStashRef = React.useRef(new Map<string, SheetSession>())
 
+  // ── Cross-sheet formulas (`=@sheet1(a1)`) ─────────────────────────────────
+  //
+  // `crossSheet` is the resolver the engine reads another tab's cells through.
+  // It cannot reach into React, so App feeds it the three things only App has:
+  // the tab strip (for name → id), the session stash (tier 2 of its hydration),
+  // and the active sheet's live rows (tier 1). See `crossSheet.ts` for why the
+  // tiers are ordered the way they are and when the cache is dropped.
+  //
+  // The stash provider is a ref read, not a value, so it is registered once and
+  // always sees the CURRENT map rather than a closed-over copy of it.
+  React.useEffect(() => {
+    crossSheet.setStashProvider((id) => {
+      const session = sheetStashRef.current.get(id)
+      return session ? { rows: session.data, formulas: session.formulas } : null
+    })
+    return () => crossSheet.setStashProvider(null)
+  }, [])
+
   /** Everything the ACTIVE sheet is showing right now, as one plain object. */
   const captureActiveSheet = React.useCallback((): SheetSession => {
     const state = table.getState()
@@ -1731,11 +1755,83 @@ export const App = ({
     commitRegistry(next)
   }, [registry, moveActiveSheet, commitRegistry])
 
+  /**
+   * Rename a tab — and rewrite every `@oldname` in the workbook to match.
+   *
+   * A cross-sheet formula stores the NAME the user typed (see the `@` notes in
+   * `formula.ts`), so without this a rename would silently turn every formula
+   * pointing at the renamed tab into `#REF!` — on tabs the user is not looking
+   * at, with no warning and nothing to undo. That is the worst outcome this
+   * feature could have, so the rewrite is done eagerly, across all three places
+   * a sheet's formulas can be sitting:
+   *
+   *   1. React state — the ACTIVE sheet's `formulas`;
+   *   2. the session stash — sheets visited earlier this page load;
+   *   3. localStorage — everything else in the registry.
+   *
+   * Tier 3 is the invasive one: it reads and rewrites every other sheet's
+   * stored payload. It is bounded by the number of tabs, only runs on an actual
+   * rename, and `renameSheetInFormulas` returns the same object (and
+   * `renameSheetInFormula` the same bytes) when a sheet has nothing to rewrite,
+   * so a workbook with no `@` in it is not re-serialised at all.
+   */
   const renameSheet = React.useCallback(
     (id: string, name: string) => {
-      commitRegistry(withRenamedSheet(registry, id, name))
+      const next = withRenamedSheet(registry, id, name)
+      const before = registry.sheets.find((sheet) => sheet.id === id)
+      const after = next.sheets.find((sheet) => sheet.id === id)
+      // `withRenamedSheet` normalises (trim / clamp / empty-falls-back), so
+      // compare what it actually produced, not what was asked for.
+      if (before && after && before.name !== after.name) {
+        const from = before.name
+        const to = after.name
+
+        // 1. active sheet
+        setFormulas((prev) => renameSheetInFormulas(prev, from, to))
+
+        // 2. session stash
+        for (const [stashId, session] of sheetStashRef.current) {
+          const rewritten = renameSheetInFormulas(session.formulas, from, to)
+          if (rewritten !== session.formulas) {
+            sheetStashRef.current.set(stashId, {
+              ...session,
+              formulas: rewritten,
+            })
+            crossSheet.invalidate(stashId)
+          }
+        }
+
+        // 3. stored sheets. Skipped for the active one (its bytes are about to
+        // be rewritten by the autosave from the state set above) and for any
+        // sheet held in the stash (the stash is fresher, and is flushed on the
+        // way back out of that tab).
+        if (standalone) {
+          for (const sheet of next.sheets) {
+            if (sheet.id === registry.activeId) continue
+            if (sheetStashRef.current.has(sheet.id)) continue
+            const saved = loadCustomSheet(sheet.id)
+            if (!saved) continue
+            const rewritten = renameSheetInFormulas(
+              saved.formulas as FormulaMap,
+              from,
+              to,
+            )
+            if (rewritten === saved.formulas) continue
+            saveCustomSheet(
+              {
+                customColumns: saved.customColumns,
+                data: saved.data,
+                formulas: rewritten,
+              },
+              sheet.id,
+            )
+            crossSheet.invalidate(sheet.id)
+          }
+        }
+      }
+      commitRegistry(next)
     },
-    [registry, commitRegistry],
+    [registry, commitRegistry, standalone],
   )
 
   const deleteSheet = React.useCallback(
@@ -1751,6 +1847,11 @@ export const App = ({
       if (id === registry.activeId) moveActiveSheet(id, next.activeId)
       sheetStashRef.current.delete(id)
       eraseSheetStorage(id)
+      // Drop the deleted sheet's cached rows too. Committing the registry below
+      // already stops `@thatName` resolving (so formulas pointing at it become
+      // `#REF!`), but a stale cache entry would keep answering for a sheet
+      // whose bytes have just been erased.
+      crossSheet.invalidate(id)
       commitRegistry(next.registry)
     },
     [registry, moveActiveSheet, commitRegistry],
@@ -1772,6 +1873,8 @@ export const App = ({
     // Every id in the registry, including the active one.
     for (const sheet of registry.sheets) eraseSheetStorage(sheet.id)
     sheetStashRef.current.clear()
+    // Every cached sheet is now bytes that no longer exist.
+    crossSheet.invalidate()
     const fresh = emptySheetRegistry()
     pointStoresAtSheet(fresh.activeId)
     commitRegistry(fresh)
@@ -2022,19 +2125,61 @@ export const App = ({
     })
   }, [columns])
 
+  // The tab strip, as the `@` resolver sees it. Committed registries are the
+  // only source of tab names, so a rename or a delete reaches every formula's
+  // `@name` here — which is what makes a deleted sheet's references become
+  // `#REF!` with no separate teardown step.
+  React.useEffect(() => {
+    crossSheet.setSheets(standalone ? registry.sheets : [])
+  }, [standalone, registry.sheets])
+
+  // Tier 1: the active sheet's rows and formulas, live. Published BEFORE the
+  // recalc effect below runs (both are layout-order effects in the same commit,
+  // and this one is declared first) so a self-reference — `@sheet2(a1)` written
+  // on sheet2 — reads the rows currently on screen rather than the last ones
+  // written to storage.
+  React.useEffect(() => {
+    if (!standalone) return
+    crossSheet.publishActive(activeSheetId, data, formulas)
+  }, [standalone, activeSheetId, data, formulas])
+
+  const crossSheetVersion = useCrossSheetVersion()
+
   // Keep every formula cell in sync with its inputs. `recalcFormulas` hands the
   // same array back when nothing changed, so React bails out and this settles
   // after one pass instead of looping.
   React.useEffect(() => {
     if (!Object.keys(formulas).length) return
     setData((old) => {
-      const next = recalcFormulas(old, formulas)
+      // No `cross` outside standalone: the library build has no tabs, and
+      // withholding the resolver is what turns `@` into a clean `#REF!` there
+      // rather than a reference to whatever happens to be in localStorage.
+      const next = recalcFormulas(
+        old,
+        formulas,
+        undefined,
+        undefined,
+        standalone ? crossSheet.contextFor(activeSheetId) : undefined,
+      )
       if (next !== old) skipAutoResetPageIndex()
       return next
     })
     // `customFunctionsVersion` is in the deps so that editing or deleting a
     // custom function re-runs every dependent formula.
-  }, [data, formulas, customFunctionsVersion])
+    //
+    // `crossSheetVersion` is in for the same reason one tier out: a tab
+    // rename, a tab delete, or a switch that invalidated another sheet's cached
+    // rows all bump it, and every `@` formula on this sheet has to be re-run
+    // against the new answer. Without it a renamed tab would keep showing the
+    // number its old name used to produce.
+  }, [
+    data,
+    formulas,
+    customFunctionsVersion,
+    crossSheetVersion,
+    standalone,
+    activeSheetId,
+  ])
 
   React.useEffect(() => {
     if (table.getState().columnFilters[0]?.id === 'fullName') {

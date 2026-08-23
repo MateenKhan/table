@@ -9,9 +9,11 @@
 //   unary      := ('+' | '-') unary | power
 //   power      := atom ('^' unary)?
 //   atom       := number
+//               | sheetScope
 //               | IDENT '(' (expr (',' expr)*)? ')'
 //               | refOrRange
 //               | '(' expr ')'
+//   sheetScope := '@' IDENT '(' expr ')'
 //   refOrRange := ref (':' ref)?
 //   ref        := namedRef | a1Ref
 //   namedRef   := IDENT ('[' '$'? number ']')?
@@ -33,6 +35,78 @@
 //
 // Both notations produce `ref` / `range` nodes; A1 ones additionally carry an
 // `a1` marker so the stringifier can round-trip the notation the user typed.
+//
+// ── `@sheet(expr)`: cross-sheet scope ───────────────────────────────────────
+//
+// `=@sheet1(a1 + b3)` evaluates `a1 + b3` against the sheet named `sheet1`.
+// It is a SCOPE, not a single-cell reference: every reference inside the
+// parentheses resolves on the named sheet, so both `a1` and `b3` above are
+// sheet1's. Anything outside stays local, which is what makes the mixed form
+// `=@sheet1(a1) + b2` read as "sheet1's A1 plus THIS sheet's B2".
+//
+// Why a leading `@` rather than Excel's `sheet1!a1`:
+//   - it is what the user asked for, and it reads as a scope rather than as a
+//     qualifier glued onto one cell;
+//   - `!` is not in `PUNCT` and adding it would make every existing bare
+//     identifier ambiguous until the next token is seen;
+//   - `@` cannot begin any other token, so the parser branches on it BEFORE it
+//     reaches the `IDENT '('` rule that produces a `call`. `@SUM(x)` is a sheet
+//     scope named `SUM`, `SUM(x)` is the builtin — they never collide, and no
+//     existing formula's meaning changes, because `@` was previously a
+//     tokenizer error (`throw`) and so could not appear in a parseable formula.
+//
+// Nesting is a PARSE error, not a silent mis-scope: `@a(@b(x))` has no sane
+// reading (is `x` on `a` or on `b`?), so it is refused outright. The evaluator
+// also drops the resolver on the way in, so a custom function body invoked
+// inside a scope cannot smuggle a second `@` past the parser.
+//
+// ── How much of `@…(` is the NAME ───────────────────────────────────────────
+//
+// Everything between the `@` and the FIRST `(`, trimmed. Not an identifier —
+// the whole raw run, whatever is in it:
+//
+//     =@Q1-Sales(a1)      sheet `Q1-Sales`
+//     =@Q1 Sales(a1)      sheet `Q1 Sales`
+//     =@2024(a1)          sheet `2024`
+//     =@ Sheet1 (a1)      sheet `Sheet1`   (the padding is trimmed)
+//
+// The first cut of this made the name an identifier token, which meant the APP
+// had to forbid spaces, hyphens and unicode in a tab name so its own grammar
+// could cope. That is backwards — a sheet is the user's data, not the parser's.
+// The greedy scan removes the restriction entirely: the only rule left on a
+// name is that it is unique and non-empty.
+//
+// The scan is unambiguous, which is the part worth spelling out, because
+// `@Q1-Sales(a1)` LOOKS like it could also read as "sheet `Q1` minus the call
+// `Sales(a1)`". It cannot: `@name` is only ever a scope, and a scope REQUIRES a
+// parenthesised body, so `@Q1` is not a complete term and there is nothing for
+// the `-` to subtract from. Someone who means that writes `@Q1(x) - Sales(b1)`,
+// where the scan to the first `(` still yields `Q1`. There is no formula whose
+// meaning the greedy scan gets wrong.
+//
+// ── The quoted form ─────────────────────────────────────────────────────────
+//
+// A name containing `(` is the one thing the scan cannot express, so there is
+// an escape hatch, spelled the way a spreadsheet user already knows it:
+//
+//     =@'Bob''s (old) Data'(a1)
+//
+// Single quotes; a literal quote inside is DOUBLED, exactly as Excel does in
+// `='Bob''s Data'!A1`. A quote opening immediately after the `@` (whitespace
+// aside) takes this path, so it is also how a name that genuinely starts with a
+// `'`, or one whose leading/trailing spaces are meaningful, is written. An
+// unterminated quote is a parse error, never a silent truncation.
+//
+// `stringifyFormula` emits the BARE form whenever the name survives the greedy
+// scan unchanged — no `(`, no leading `'`, no outer whitespace — and the quoted
+// form otherwise. So ordinary formulas stay ordinary, and a name that needs
+// quotes always gets them: re-parsing what was emitted always names the same
+// sheet.
+//
+// Names are matched case-insensitively, but whitespace is SIGNIFICANT —
+// `@'Q1 Sales'` and `@Q1Sales` are two different sheets and must never collide.
+// A name that does not resolve (typo, deleted tab, or a host that has no sheets
+// at all, e.g. the library build) evaluates to `#REF!`, never to a plausible 0.
 //
 // Functions are the seven builtins plus whatever is in the custom-function
 // registry (`customFunctions.ts`), which is consulted at *evaluation* time so
@@ -88,9 +162,81 @@ export type FormulaNode =
   | { kind: 'unary'; op: '+' | '-'; arg: FormulaNode }
   | { kind: 'binary'; op: '+' | '-' | '*' | '/' | '^'; left: FormulaNode; right: FormulaNode }
   | { kind: 'call'; name: string; args: FormulaNode[] }
+  // `@name(expr)`. `name` is the name ITSELF — unquoted and trimmed, exactly
+  // the string a tab is called, never the `'…'` source text. `sheetRefText`
+  // puts the quotes back on the way out; matching against real sheets is done
+  // on a normalised form (see `sheetNameKey`) at evaluation time.
+  // `wider` is diagnostic only — never part of the meaning, never emitted, and
+  // dropped by any rewrite. See `readSheetName`.
+  | { kind: 'sheet'; name: string; arg: FormulaNode; wider?: string }
 
 export const ERROR_GENERIC = '#ERROR'
 export const ERROR_DIV0 = '#DIV/0!'
+/**
+ * A reference that cannot be resolved to anything: an `@name` naming no sheet,
+ * a sheet that has since been deleted, or `@` used where the host provides no
+ * sheets at all (the library build). Distinct from `#ERROR` on purpose — the
+ * formula is well-formed, it is the *target* that is missing, and telling those
+ * two apart is the difference between "fix your typo" and "fix your syntax".
+ */
+export const ERROR_REF = '#REF!'
+
+/**
+ * `@Q1(a)` where no sheet is called `Q1` but one IS called `Q1(a)`.
+ *
+ * A separate code rather than `#REF!` because the two need opposite reactions:
+ * `#REF!` means "there is no such sheet, check the name", while this means "the
+ * sheet is right there — its name has a `(` in it, so it has to be written
+ * `@'Q1(a)'(…)`". The greedy `@…(` scan is what makes the mistake possible and
+ * quoting is what fixes it, so the error says which of the two you are in.
+ *
+ * It is never a guess AT the value: the reference still evaluates to an error,
+ * because the app must not decide on the user's behalf which sheet they meant.
+ */
+export const ERROR_QUOTE = '#QUOTE!'
+
+/**
+ * The form two sheet names are compared in: trimmed and case-folded.
+ *
+ * INNER whitespace is significant. An earlier cut folded it out, because the
+ * name was an identifier token and `Sheet 1` could only ever be typed as
+ * `@sheet1`; the greedy scan can hold the space, so folding it would now be a
+ * bug — it would make `@'Q1 Sales'` and `@Q1Sales` name the same sheet, and
+ * two tabs the user can plainly tell apart would be indistinguishable to `@`.
+ *
+ * The outer trim stays: the scan already trims what it reads, tab names are
+ * stored trimmed (`normalizeSheetName`), and `@ Sheet1 (a1)` should find
+ * `Sheet1`.
+ *
+ * This is THE collision key. `sheetRegistry.uniqueSheetName` imports it rather
+ * than keeping its own, so the names uniqueness lets coexist are exactly the
+ * ones `@` can tell apart.
+ */
+export const sheetNameKey = (name: string): string => name.trim().toLowerCase()
+
+/**
+ * Would `name` survive the greedy `@…(` scan byte-for-byte?
+ *
+ * The scan takes everything up to the first `(` and trims it, so a name is
+ * writable bare unless it holds a `(`, has padding the trim would eat, or opens
+ * with the `'` that would send the reader down the quoted path instead.
+ */
+export const isBareSheetName = (name: string): boolean =>
+  name.length > 0 &&
+  !name.includes('(') &&
+  !name.startsWith("'") &&
+  name.trim() === name
+
+/**
+ * A sheet name as a formula writes it: bare when it round-trips that way,
+ * single-quoted with doubled inner quotes when it does not.
+ *
+ * Exported because the UI writes `@` references too (and so do the tests that
+ * pin the round trip); there must be exactly one answer to "how is this name
+ * spelled in a formula".
+ */
+export const sheetRefText = (name: string): string =>
+  isBareSheetName(name) ? name : `'${name.replace(/'/g, "''")}'`
 
 // Guard rail so a typo like `age[1]:age[99999999]` cannot lock up the tab.
 const MAX_RANGE = 20000
@@ -117,6 +263,14 @@ type Token =
   | { type: 'num'; text: string }
   | { type: 'ident'; text: string }
   | { type: 'punct'; text: string }
+  // A whole `@…` sheet name, already unquoted/trimmed. Produced by the
+  // tokenizer rather than assembled by the parser because the name is NOT
+  // built out of tokens — it is a raw run of characters most of which the
+  // tokenizer would otherwise reject.
+  //
+  // `wider` is the repair hint for the one thing the bare scan cannot reach: a
+  // sheet whose NAME contains `(`. See `readSheetName`.
+  | { type: 'sheet'; text: string; wider?: string }
 
 const isDigit = (c: string) => c >= '0' && c <= '9'
 const isSpace = (c: string) => c === ' ' || c === '\t' || c === '\n' || c === '\r'
@@ -124,7 +278,102 @@ const isIdentStart = (c: string) =>
   (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_'
 const isIdentPart = (c: string) => isIdentStart(c) || isDigit(c)
 
+// `@` is NOT in here: it is handled by its own branch, which swallows the sheet
+// name along with it (see `readSheetName`). It was a hard tokenizer error
+// before cross-sheet refs existed, so nothing that parses today can contain
+// one — neither it nor the `'` that opens a quoted name can change the meaning
+// of any stored formula.
 const PUNCT = '+-*/^(),:[]$'
+
+/**
+ * Read the sheet name that follows an `@` at `at`, and say where it ended.
+ *
+ * Two shapes, chosen by whether a `'` opens (whitespace between the `@` and the
+ * name is skipped either way):
+ *
+ *   QUOTED  `'Q1 Sales'`, `'Bob''s (old) Data'` — runs to the matching close
+ *           quote, `''` standing for one literal `'`. The next non-space
+ *           character must be the `(` that opens the body.
+ *   BARE    everything up to the first `(`, trimmed.
+ *
+ * Throws for the three things that have no reading: an unterminated quote, a
+ * name with no `(` after it (a scope with no body — `=@sheet1`), and an empty
+ * name (`=@(a1)`). `end` points AT the `(`, which the caller's loop then emits
+ * as ordinary punctuation.
+ *
+ * ── `wider`, and the failure it exists to explain ───────────────────────────
+ * A sheet named `Q1(a)` is reachable only as `@'Q1(a)'(x)`. A user who writes
+ * it bare — `=@Q1(a)` — gets a perfectly valid parse of a DIFFERENT reference:
+ * scope `Q1`, body `a`. If no sheet is called `Q1` that is a `#REF!` with
+ * nothing on screen hinting that quotes were the answer, which is the worst
+ * kind of error: silent, and unexplainable from what is visible.
+ *
+ * So a bare scan also reports the wider reading — the raw text from just after
+ * the `@` through the body's matching `)`, which for `=@Q1(a)` is `Q1(a)`. The
+ * evaluator tries it only AFTER the real name has failed, and only to pick a
+ * distinct error code (`#QUOTE!`), never to resolve: guessing which sheet was
+ * meant is exactly the silent-wrong-answer behaviour this grammar removed.
+ */
+function readSheetName(
+  src: string,
+  at: number,
+): { name: string; end: number; wider?: string } {
+  let j = at + 1
+  while (j < src.length && isSpace(src[j])) j++
+
+  if (src[j] === "'") {
+    j++
+    let name = ''
+    for (;;) {
+      // Running off the end is a parse error, not a name that happens to reach
+      // the end of the line: silently accepting `=@'Q1 Sales(a1)` would invent
+      // a sheet called `Q1 Sales(a1` out of a missing keystroke.
+      if (j >= src.length) throw new FormulaError(ERROR_GENERIC)
+      if (src[j] === "'") {
+        // `''` is one literal quote; a lone `'` closes the name.
+        if (src[j + 1] === "'") {
+          name += "'"
+          j += 2
+          continue
+        }
+        j++
+        break
+      }
+      name += src[j]
+      j++
+    }
+    while (j < src.length && isSpace(src[j])) j++
+    if (src[j] !== '(' || !name) throw new FormulaError(ERROR_GENERIC)
+    return { name, end: j }
+  }
+
+  const start = j
+  while (j < src.length && src[j] !== '(') j++
+  if (j >= src.length) throw new FormulaError(ERROR_GENERIC)
+  const name = src.slice(start, j).trim()
+  if (!name) throw new FormulaError(ERROR_GENERIC)
+  return { name, end: j, wider: widerName(src, at, j) }
+}
+
+/**
+ * `src[at+1 … matching ')' ]` — the name a quoted reference would have had,
+ * for a bare one whose body starts at the `(` at `open`. `undefined` when the
+ * parens do not balance, or when it says nothing the bare name did not.
+ */
+function widerName(src: string, at: number, open: number): string | undefined {
+  let depth = 0
+  for (let k = open; k < src.length; k++) {
+    if (src[k] === '(') depth++
+    else if (src[k] === ')') {
+      depth--
+      if (depth === 0) {
+        const wider = src.slice(at + 1, k + 1).trim()
+        return wider.includes('(') ? wider : undefined
+      }
+    }
+  }
+  return undefined
+}
 
 function tokenize(src: string): Token[] {
   const out: Token[] = []
@@ -147,6 +396,15 @@ function tokenize(src: string): Token[] {
       }
       out.push({ type: 'num', text: src.slice(i, j) })
       i = j
+      continue
+    }
+
+    // Before the ident and punctuation rules, because the name it swallows is
+    // made of neither.
+    if (c === '@') {
+      const { name, end, wider } = readSheetName(src, i)
+      out.push({ type: 'sheet', text: name, wider })
+      i = end
       continue
     }
 
@@ -206,6 +464,10 @@ export function parseFormula(src: string): FormulaNode | null {
     const body = trimmed.startsWith('=') ? trimmed.slice(1) : trimmed
     const tokens = tokenize(body)
     let i = 0
+    // Depth of `@name(` scopes currently open. Only ever 0 or 1: a second one
+    // is refused (see `parseAtom`), because `@a(@b(x))` gives `x` two possible
+    // homes and picking either silently would be worse than saying no.
+    let sheetDepth = 0
 
     const peek = (): Token | undefined => tokens[i]
     const isPunct = (text: string) => {
@@ -334,6 +596,36 @@ export function parseFormula(src: string): FormulaNode | null {
         const inner = parseExpr()
         eat(')')
         return inner
+      }
+
+      // `@name(expr)` — the cross-sheet scope. Checked BEFORE the `IDENT '('`
+      // call rule below, and reachable only through a `sheet` token (which only
+      // an `@` can produce), so a sheet named `SUM` and the builtin `SUM`
+      // cannot be confused for one another.
+      if (t.type === 'sheet') {
+        // Nesting is refused rather than resolved: see `sheetDepth` above.
+        if (sheetDepth > 0) throw new FormulaError(ERROR_GENERIC)
+        const nameToken = t
+        i++
+        eat('(')
+        sheetDepth++
+        let inner: FormulaNode
+        try {
+          inner = parseExpr()
+        } finally {
+          // Restored even on a throw so the outer `catch` in `parseFormula`
+          // cannot leave a stale depth behind for a later parse — `sheetDepth`
+          // is per-call, but the `finally` keeps the invariant local and
+          // obvious rather than depending on that.
+          sheetDepth--
+        }
+        eat(')')
+        return {
+          kind: 'sheet',
+          name: nameToken.text,
+          arg: inner,
+          ...(nameToken.wider ? { wider: nameToken.wider } : null),
+        }
       }
 
       const after = tokens[i + 1]
@@ -468,6 +760,15 @@ function emit(node: FormulaNode, minPrec: number): string {
       return `${node.col}${rowRefText(node.from)}:${node.col}${rowRefText(node.to)}`
     case 'call':
       return `${node.name}(${node.args.map((arg) => emit(arg, 0)).join(', ')})`
+    case 'sheet':
+      // The parentheses are part of the syntax, not grouping, so the body is
+      // always emitted at precedence 0 — `@s(a + b)` must never come back as
+      // `@s(a) + b`, which would move `b` to a different sheet.
+      //
+      // `sheetRefText` picks bare vs quoted. It is the only thing standing
+      // between a name like `Bob's (old) Data` and a formula that re-parses as
+      // a different sheet, so nothing here may shortcut to `node.name`.
+      return `@${sheetRefText(node.name)}(${emit(node.arg, 0)})`
     case 'unary': {
       const text = `${node.op}${emit(node.arg, UNARY_PREC)}`
       return minPrec > UNARY_PREC ? `(${text})` : text
@@ -541,6 +842,21 @@ function shiftNode(node: FormulaNode, rowDelta: number, colDelta: number): Formu
         name: node.name,
         args: node.args.map((arg) => shiftNode(arg, rowDelta, colDelta)),
       }
+    case 'sheet':
+      // DELIBERATELY NOT SHIFTED, and not recursed into.
+      //
+      // Every caller of this shifts by a distance measured on the sheet being
+      // edited: a fill drag's row span, or the rows/columns an insert or a
+      // move displaced HERE. A reference inside `@other(...)` resolves against
+      // `other`'s geometry, which those edits did not touch, so shifting it
+      // would walk the reference off the cell the user aimed at for a reason
+      // that has nothing to do with the other sheet.
+      //
+      // The practical reading is the useful one: filling `=@sheet1(a1) + b2`
+      // down a column shifts `b2` to `b3`, `b4`, … while `@sheet1(a1)` stays
+      // pinned — an anchor column against a running local one. A user who
+      // wants the cross-sheet half to move can write the row out explicitly.
+      return node
   }
 }
 
@@ -556,6 +872,102 @@ export function translateFormula(src: string, rowDelta: number, colDelta = 0): s
   const shifted = stringifyFormula(shiftNode(ast, rowDelta, colDelta))
   // Nothing moved (no explicit relative refs) - keep the author's text.
   return shifted === stringifyFormula(ast) ? src : shifted
+}
+
+/* -------------------------------------------------------- sheet renaming */
+//
+// A formula stores the sheet NAME the user typed, because that is what they
+// typed and what they will read back. The cost of that choice is that renaming
+// a tab would otherwise break every formula pointing at it — silently, on tabs
+// the user is not even looking at, which is the single worst failure this
+// feature could have. So a rename REWRITES: `@oldname` becomes `@newname`
+// everywhere, on every sheet, in the same step the tab is renamed.
+//
+// Matching is on the normalised form (`sheetNameKey`), so renaming `Sheet 1`
+// catches formulas that spelled it `@Sheet 1`, `@'Sheet 1'` or `@SHEET 1`. The
+// replacement is the new name VERBATIM — the stringifier decides how to spell
+// it, so renaming `Sheet 1` to `Q1 Sales` gives `@Q1 Sales(…)` and renaming it
+// to `Bob's (old) Data` gives `@'Bob''s (old) Data'(…)`. Formulas move between
+// the bare and quoted forms on their own, and never keep a spelling that would
+// now re-parse to a different sheet.
+//
+// Same restraint as `translateFormula` and the legacy migration above: a
+// formula with nothing to rewrite is handed back as the author's own bytes.
+
+function renameSheetNode(
+  node: FormulaNode,
+  fromKey: string,
+  to: string,
+): FormulaNode {
+  switch (node.kind) {
+    case 'num':
+    case 'ref':
+    case 'range':
+      return node
+    case 'unary': {
+      const arg = renameSheetNode(node.arg, fromKey, to)
+      return arg === node.arg ? node : { kind: 'unary', op: node.op, arg }
+    }
+    case 'binary': {
+      const left = renameSheetNode(node.left, fromKey, to)
+      const right = renameSheetNode(node.right, fromKey, to)
+      return left === node.left && right === node.right
+        ? node
+        : { kind: 'binary', op: node.op, left, right }
+    }
+    case 'call': {
+      const args = node.args.map((arg) => renameSheetNode(arg, fromKey, to))
+      return args.every((arg, i) => arg === node.args[i])
+        ? node
+        : { kind: 'call', name: node.name, args }
+    }
+    case 'sheet': {
+      // Nesting is impossible (the parser refuses it), so the body can only
+      // hold local references — nothing further down can name a sheet.
+      if (sheetNameKey(node.name) !== fromKey) return node
+      return { kind: 'sheet', name: to, arg: node.arg }
+    }
+  }
+}
+
+/**
+ * Rewrite `@from` to `@to` in one formula. Non-formulas, unparseable text and
+ * formulas that do not mention `from` come back byte-identical.
+ */
+export function renameSheetInFormula(src: string, from: string, to: string): string {
+  if (!isFormula(src)) return src
+  // Cheap reject: no `@` at all, nothing to do. Keeps a rename from re-emitting
+  // (and so reformatting) every ordinary formula in the workbook.
+  if (!src.includes('@')) return src
+  const fromKey = sheetNameKey(from)
+  // A rename to nothing is not a rename. Rewriting to `from` instead would
+  // still re-emit (and so reformat) every formula that mentions the sheet, for
+  // a change that did not happen.
+  if (!fromKey || !sheetNameKey(to)) return src
+  const ast = parseFormula(src)
+  if (!ast) return src
+  const renamed = renameSheetNode(ast, fromKey, to.trim())
+  return renamed === ast ? src : stringifyFormula(renamed)
+}
+
+/**
+ * `renameSheetInFormula` over a whole formula map. Returns the SAME object when
+ * nothing changed, so a caller can `if (next !== prev)` its way out of a
+ * pointless write or `setState`.
+ */
+export function renameSheetInFormulas(
+  formulas: FormulaMap,
+  from: string,
+  to: string,
+): FormulaMap {
+  let changed = false
+  const out: FormulaMap = {}
+  for (const [key, src] of Object.entries(formulas)) {
+    const next = renameSheetInFormula(src, from, to)
+    if (next !== src) changed = true
+    out[key] = next
+  }
+  return changed ? out : formulas
 }
 
 /* ------------------------------------------------- legacy A1 migration */
@@ -671,6 +1083,13 @@ function migrateNode(node: FormulaNode, live: readonly string[]): FormulaNode {
         ? node
         : { kind: 'call', name: node.name, args }
     }
+
+    case 'sheet':
+      // Unreachable in practice — v1 payloads predate `@` entirely, so no
+      // stored formula being migrated can contain one. Returned untouched
+      // rather than recursed into because `live` is THIS sheet's letter space
+      // and the body's references belong to another sheet's.
+      return node
   }
 }
 
@@ -714,6 +1133,33 @@ export function migrateLegacyA1Formulas(
 
 /* --------------------------------------------------------------- evaluate */
 
+/**
+ * One other sheet, as the evaluator needs to see it: a stable id (the key
+ * space cross-sheet cycle detection reasons in) and a cell reader over its
+ * ALREADY-COMPUTED rows.
+ *
+ * "Already computed" is load bearing. The rows a sheet persists have its own
+ * formula results folded into them by `recalcFormulas`, so reading another
+ * sheet is a plain array lookup and never re-enters the evaluator. That is
+ * what makes a cross-sheet cycle finite rather than a stack overflow: the
+ * recursion the cycle describes does not physically exist at evaluation time,
+ * only in the dependency graph. Detecting it is a correctness job (show
+ * `#CIRCULAR!`, not a stale number), not a safety one.
+ */
+export type SheetReader = {
+  id: string
+  getCell: (rowIndex: number, columnId: string) => unknown
+}
+
+/**
+ * Resolve an `@name` as typed to the sheet it means, or `null` for `#REF!`.
+ *
+ * Absent from a context entirely when the host has no sheets — the library
+ * build (`lib.tsx`) is exactly that case, and there `@` degrades to a clean
+ * `#REF!` rather than throwing.
+ */
+export type SheetLookup = (name: string) => SheetReader | null
+
 export type EvalContext = {
   // 0-based index into the underlying `data` array.
   currentRow: number
@@ -721,6 +1167,10 @@ export type EvalContext = {
   // Custom function registry. Defaults to the shared `customFunctions` one,
   // which is what lets existing callers pick definitions up with no wiring.
   functions?: FunctionLookup
+  // Cross-sheet resolver for `@name(…)`. Optional: every pre-existing caller
+  // omits it and keeps its exact previous behaviour, and omitting it is also
+  // the correct configuration for a host with one sheet.
+  sheets?: SheetLookup
 }
 
 export type FormulaResult =
@@ -979,6 +1429,44 @@ function evalNode(node: FormulaNode, ctx: EvalContext, scope: Scope): Value {
         )
       }
       return callCustom(node, ctx, scope)
+
+    case 'sheet': {
+      // No resolver at all: the host has no sheets (library build). That is a
+      // `#REF!` — the reference names something that does not exist here —
+      // and NOT a crash or a silent 0.
+      if (!ctx.sheets) throw new FormulaError(ERROR_REF)
+      const reader = ctx.sheets(node.name)
+      // Unknown name and deleted sheet arrive here identically, and are the
+      // same answer: there is no such sheet.
+      //
+      // Except for one distinguishable case. If the name only got truncated
+      // because the sheet's own name contains a `(`, say so with `#QUOTE!` —
+      // "quote this name", not "no such sheet". Checked only on the failure
+      // path, so it costs nothing when the reference is fine, and it resolves
+      // nothing: the formula still errors, it just errors informatively.
+      if (!reader) {
+        throw new FormulaError(
+          node.wider && ctx.sheets(node.wider) ? ERROR_QUOTE : ERROR_REF,
+        )
+      }
+
+      // Swap only the cell reader. `currentRow` is kept, so a bare column ref
+      // inside the scope (`@sheet1(age)`) means "sheet1's `age`, same row
+      // number" — the reading that makes `=@sheet1(age) - age` a row-by-row
+      // diff between two sheets, which is the obvious use for it.
+      //
+      // `sheets` is dropped on the way in. The parser already refuses a
+      // literal nested `@`, but a CUSTOM FUNCTION body is parsed separately
+      // and could carry one; without this it would resolve against the outer
+      // resolver and land on a third sheet while reading the second's rows.
+      // Refusing it keeps "one scope, one sheet" true no matter how the body
+      // got here.
+      return evalNode(
+        node.arg,
+        { ...ctx, getCell: reader.getCell, sheets: undefined },
+        scope,
+      )
+    }
   }
 }
 
@@ -1051,6 +1539,15 @@ setBodyValidator((definition) => {
         // custom function is allowed here (that is what makes mutually
         // recursive definitions expressible - and detectable when they run).
         node.args.forEach(walk)
+        return
+      case 'sheet':
+        // Refused outright rather than half-checked. A definition is shared by
+        // every sheet, so `@sheet1` inside one would mean "sheet1" no matter
+        // which sheet called it - and the moment it is called from inside
+        // another `@` scope the evaluator drops the resolver and it becomes
+        // `#REF!` anyway. Better to say so while it is being written than to
+        // hand back a definition that works in some cells and not others.
+        error = 'a custom function body cannot use "@" to reach another sheet'
     }
   }
 
@@ -1089,22 +1586,33 @@ const refRow = (ref: RowRef, currentRow: number) =>
  * engine's data/definition space — exactly the coordinates the grid keys
  * formatting (and its highlight) on. Handles every ref form: named (`age`),
  * indexed (`age[12]` / `age[$12]`), the new `name+row` (`age1`) and A1.
+ *
+ * CROSS-SHEET. A reference inside `@other(…)` carries the resolved `sheetId`
+ * of the sheet it lands on; a local one carries none. That distinction is not
+ * cosmetic: the grid shows one sheet at a time, so painting `@sheet1(a1)` onto
+ * the CURRENT sheet's A1 would tell the user the formula reads a cell it does
+ * not read. `resolveSheet` maps an `@name` as typed to a sheet id; without one
+ * (a host with no sheets) every `@` body is skipped entirely rather than
+ * collapsing onto local coordinates.
  */
 export function extractReferences(
   formula: string,
   currentDataRow: number,
-): { columnId: string; dataRow: number }[] {
+  resolveSheet?: (name: string) => string | null,
+): { columnId: string; dataRow: number; sheetId?: string }[] {
   const ast = parseFormula(formula)
   if (!ast) return []
 
-  const out: { columnId: string; dataRow: number }[] = []
+  const out: { columnId: string; dataRow: number; sheetId?: string }[] = []
   const seen = new Set<string>()
+  // The sheet the walk is currently inside, or '' for the formula's own sheet.
+  let sheetId = ''
   const push = (columnId: string, dataRow: number) => {
     if (!columnId || dataRow < 0) return
-    const key = `${dataRow}:${columnId}`
+    const key = `${sheetId} ${dataRow}:${columnId}`
     if (seen.has(key)) return
     seen.add(key)
-    out.push({ columnId, dataRow })
+    out.push(sheetId ? { columnId, dataRow, sheetId } : { columnId, dataRow })
   }
 
   const walk = (node: FormulaNode) => {
@@ -1148,6 +1656,18 @@ export function extractReferences(
       case 'call':
         node.args.forEach(walk)
         return
+      case 'sheet': {
+        // An `@name` that resolves to nothing highlights nothing. Silence is
+        // the correct signal here — the whole point of the highlight is that
+        // its ABSENCE is what tells the user the reference was not understood.
+        const resolved = resolveSheet?.(node.name)
+        if (!resolved) return
+        const outer = sheetId
+        sheetId = resolved
+        walk(node.arg)
+        sheetId = outer
+        return
+      }
     }
   }
 
@@ -1159,22 +1679,51 @@ export function extractReferences(
   return out
 }
 
+/**
+ * Which sheet a sub-expression is being read against, while `readsCell` walks.
+ *
+ * `here` is the sheet the walk is currently inside — the formula's own sheet
+ * at the top, the resolved sheet inside an `@` scope. `target` is the sheet the
+ * cell being asked about lives on. Both are `''` for callers that have no sheet
+ * dimension at all, which makes `here === target` trivially true and reduces
+ * the whole thing to the single-sheet behaviour that predates this.
+ */
+type SheetScope = {
+  here: string
+  target: string
+  resolve: (name: string) => string | null
+}
+
+const NO_SHEETS: SheetScope = {
+  here: '',
+  target: '',
+  resolve: () => null,
+}
+
 // Does this formula, evaluated on `currentRow`, read the cell at
-// (targetRow, targetCol)?
+// (targetRow, targetCol) ON `scope.target`?
 function readsCell(
   node: FormulaNode,
   currentRow: number,
   targetRow: number,
   targetCol: string,
+  scope: SheetScope = NO_SHEETS,
 ): boolean {
+  // A reference only reaches the target cell when the sheet it resolves
+  // against IS the target's sheet. Checked once, at the top, so every ref/range
+  // case below stays exactly the coordinate test it always was.
+  const sameSheet = scope.here === scope.target
+
   switch (node.kind) {
     case 'num':
       return false
     case 'ref': {
+      if (!sameSheet) return false
       const col = node.a1 ? columnIdAtIndex(node.a1.index) : node.col
       return col === targetCol && refRow(node.row, currentRow) === targetRow
     }
     case 'range': {
+      if (!sameSheet) return false
       const a = refRow(node.from, currentRow)
       const b = refRow(node.to, currentRow)
       if (targetRow < Math.min(a, b) || targetRow > Math.max(a, b)) return false
@@ -1192,45 +1741,178 @@ function readsCell(
       return (node.a1 ? columnIdAtIndex(node.a1.index) : node.col) === targetCol
     }
     case 'unary':
-      return readsCell(node.arg, currentRow, targetRow, targetCol)
+      return readsCell(node.arg, currentRow, targetRow, targetCol, scope)
     case 'binary':
       return (
-        readsCell(node.left, currentRow, targetRow, targetCol) ||
-        readsCell(node.right, currentRow, targetRow, targetCol)
+        readsCell(node.left, currentRow, targetRow, targetCol, scope) ||
+        readsCell(node.right, currentRow, targetRow, targetCol, scope)
       )
     case 'call':
       return node.args.some((arg) =>
-        readsCell(arg, currentRow, targetRow, targetCol),
+        readsCell(arg, currentRow, targetRow, targetCol, scope),
       )
+    case 'sheet': {
+      // Re-aim the walk at the named sheet. An unresolvable name reads nothing
+      // — it is `#REF!` at evaluation time, and a `#REF!` cell cannot be part
+      // of a cycle.
+      const here = scope.resolve(node.name)
+      if (!here) return false
+      return readsCell(node.arg, currentRow, targetRow, targetCol, {
+        ...scope,
+        here,
+      })
+    }
   }
 }
 
 /**
+ * Everything `findCircularKeys` needs to follow a cycle off the sheet it was
+ * handed. Omit it and the whole thing collapses to its original single-sheet
+ * behaviour, which is exactly what every pre-existing caller wants.
+ *
+ *   `sheetId`  the sheet `formulas` belongs to — the origin of the key space.
+ *   `lookup`   an `@name` as typed → that sheet's id and its own formula map.
+ *              Called for every `@` reached, on any sheet, so a cycle three
+ *              tabs long is followed the same way a two-tab one is.
+ */
+export type CrossSheetFormulas = {
+  sheetId: string
+  lookup: (name: string) => { id: string; formulas: FormulaMap } | null
+}
+
+/**
+ * Ceiling on how much of a workbook the cross-sheet graph will pull in.
+ *
+ * The edge build is O(n²) over formula CELLS — it always has been — and one
+ * sheet's formula map was its natural bound. Following `@` removes that bound,
+ * so a workbook of ten heavily-formula'd tabs could turn a keystroke into
+ * millions of comparisons. Past the cap the extra sheets are simply not walked:
+ * cycles wholly inside the local sheet are still found (that is the case that
+ * can actually hang a recalc), and a missed CROSS-sheet cycle degrades to a
+ * stale number rather than a freeze, because cross-sheet reads never re-enter
+ * the evaluator. Correctness of the common case, bounded cost in the extreme.
+ */
+const MAX_CYCLE_NODES = 4000
+
+/**
  * Formula cells that sit on a dependency cycle, directly (`=age` in `age`) or
- * through other formula cells.
+ * through other formula cells — including cells on OTHER sheets reached
+ * through `@name(…)`.
  *
  * Without this a self-referential formula never reaches a fixed point: each
  * pass produces a new value, `recalcFormulas` returns a changed array, and the
  * caller's effect re-runs forever. Only formula cells can close a cycle, so the
  * graph is built over them alone.
+ *
+ * CROSS-SHEET. `sheet1!A1 = @sheet2(a1)` with `sheet2!A1 = @sheet1(a1)` is a
+ * genuine cycle even though neither evaluation recurses (a cross-sheet read
+ * hits stored, already-computed rows — see `SheetReader`). Left undetected it
+ * shows a number that came from whenever those rows were last written, which is
+ * the one outcome worse than an error. So the graph's key space gains a sheet:
+ * internally every node is `<sheetId> <dataIndex>:<columnId>`.
+ *
+ * The RETURN value is still keyed the way `recalcFormulas` consumes it —
+ * plain `<dataIndex>:<columnId>` — and contains only cells on `cross.sheetId`,
+ * because those are the only cells the caller is about to recompute. A cell on
+ * another tab that is part of the same cycle gets its own `#CIRCULAR!` when
+ * that tab is recalculated, by this same function run from there.
  */
-export function findCircularKeys(formulas: FormulaMap): Set<string> {
-  type Node = { ast: FormulaNode; dataIndex: number; columnId: string }
+export function findCircularKeys(
+  formulas: FormulaMap,
+  cross?: CrossSheetFormulas,
+): Set<string> {
+  type Node = {
+    ast: FormulaNode
+    sheetId: string
+    dataIndex: number
+    columnId: string
+  }
+
+  const homeSheet = cross?.sheetId ?? ''
+  // A SPACE cannot occur in a sheet id (`s1`, `s2`, … — see `sheetRegistry`)
+  // or in a column id, so the two halves of a graph key can never be confused
+  // for one another.
+  const graphKey = (sheetId: string, cellKey: string) => `${sheetId} ${cellKey}`
 
   const parsed = new Map<string, Node>()
-  for (const key of Object.keys(formulas)) {
-    const { dataIndex, columnId } = parseFormulaKey(key)
-    const ast = parseFormula(formulas[key]!)
-    if (ast && Number.isInteger(dataIndex)) {
-      parsed.set(key, { ast, dataIndex, columnId })
+  // `@name` → sheet id, memoised. Also the resolver `readsCell` walks with, so
+  // one name is looked up once per `findCircularKeys` call no matter how many
+  // formulas mention it.
+  const nameToId = new Map<string, string | null>()
+
+  const addSheet = (sheetId: string, map: FormulaMap): void => {
+    for (const key of Object.keys(map)) {
+      if (parsed.size >= MAX_CYCLE_NODES) return
+      const { dataIndex, columnId } = parseFormulaKey(key)
+      const ast = parseFormula(map[key]!)
+      if (ast && Number.isInteger(dataIndex)) {
+        parsed.set(graphKey(sheetId, key), { ast, sheetId, dataIndex, columnId })
+      }
     }
   }
+
+  addSheet(homeSheet, formulas)
+
+  // Pull in every sheet reachable through an `@`, transitively. Bounded by the
+  // node cap above and by `nameToId` / `loadedSheets`, so a mutual reference
+  // between two tabs cannot loop here.
+  if (cross) {
+    const loadedSheets = new Set<string>([homeSheet])
+    const pending: FormulaNode[] = []
+    for (const node of parsed.values()) pending.push(node.ast)
+
+    while (pending.length) {
+      const node = pending.pop()!
+      switch (node.kind) {
+        case 'unary':
+          pending.push(node.arg)
+          break
+        case 'binary':
+          pending.push(node.left, node.right)
+          break
+        case 'call':
+          pending.push(...node.args)
+          break
+        case 'sheet': {
+          pending.push(node.arg)
+          const nameKey = sheetNameKey(node.name)
+          if (!nameToId.has(nameKey)) {
+            const hit = cross.lookup(node.name)
+            nameToId.set(nameKey, hit ? hit.id : null)
+            if (hit && !loadedSheets.has(hit.id)) {
+              loadedSheets.add(hit.id)
+              const before = parsed.size
+              addSheet(hit.id, hit.formulas)
+              // Newly added formulas may themselves reach further sheets.
+              let n = 0
+              for (const added of parsed.values()) {
+                if (n++ < before) continue
+                pending.push(added.ast)
+              }
+            }
+          }
+          break
+        }
+        default:
+          break
+      }
+    }
+  }
+
+  const resolve = (name: string): string | null =>
+    nameToId.get(sheetNameKey(name)) ?? null
 
   const edges = new Map<string, string[]>()
   for (const [key, from] of parsed) {
     const deps: string[] = []
     for (const [otherKey, to] of parsed) {
-      if (readsCell(from.ast, from.dataIndex, to.dataIndex, to.columnId)) {
+      if (
+        readsCell(from.ast, from.dataIndex, to.dataIndex, to.columnId, {
+          here: from.sheetId,
+          target: to.sheetId,
+          resolve,
+        })
+      ) {
         deps.push(otherKey)
       }
     }
@@ -1260,7 +1942,36 @@ export function findCircularKeys(formulas: FormulaMap): Set<string> {
   }
 
   for (const key of parsed.keys()) visit(key)
-  return circular
+
+  // Back to the caller's key space: only the home sheet, only the cell half.
+  const prefix = `${homeSheet} `
+  const local = new Set<string>()
+  for (const key of circular) {
+    if (key.startsWith(prefix)) local.add(key.slice(prefix.length))
+  }
+  return local
+}
+
+/**
+ * One other sheet, complete enough for both halves of a recalc: its rows (to
+ * read values from) and its formula map (to trace cycles through). Deliberately
+ * one object rather than two lookups — a resolver that could answer one and not
+ * the other is a resolver that can report a cycle it cannot evaluate, or worse.
+ *
+ * Structurally a `SheetReader` and a `findCircularKeys` entry at the same time,
+ * so it feeds both without any adapting.
+ */
+export type CrossSheetSheet = {
+  id: string
+  getCell: (rowIndex: number, columnId: string) => unknown
+  formulas: FormulaMap
+}
+
+/** The whole cross-sheet dimension of a recalc: who we are, and how to reach
+ *  everyone else. Omitted by hosts with a single sheet. */
+export type CrossSheetContext = {
+  sheetId: string
+  lookup: (name: string) => CrossSheetSheet | null
 }
 
 // Recomputes every stored formula into a fresh copy of `rows`. Returns the
@@ -1272,13 +1983,21 @@ export function recalcFormulas<T extends object>(
   formulas: FormulaMap,
   passes = 8,
   functions: FunctionLookup = customFunctions,
+  cross?: CrossSheetContext,
 ): T[] {
   const keys = Object.keys(formulas)
   if (!keys.length) return rows
 
   // Cells on a dependency cycle are never evaluated: they resolve to a stable
-  // marker instead, which is what lets this settle at all.
-  const circular = findCircularKeys(formulas)
+  // marker instead, which is what lets this settle at all. With `cross` the
+  // graph follows `@` off this sheet too, so a two-tab cycle reports
+  // `#CIRCULAR!` rather than a number left over from the last time the other
+  // tab was written.
+  const circular = findCircularKeys(formulas, cross)
+  // `lookup` already returns `{ id, getCell }`, which IS a `SheetReader`.
+  const sheets: SheetLookup | undefined = cross
+    ? (name) => cross.lookup(name)
+    : undefined
 
   let current = rows
   let unsettled: string[] = []
@@ -1301,6 +2020,7 @@ export function recalcFormulas<T extends object>(
           currentRow: dataIndex,
           getCell: ctxGet,
           functions,
+          sheets,
         })
         value = result.ok ? result.value : result.error
       }

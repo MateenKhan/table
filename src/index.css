@@ -376,6 +376,36 @@
   animation: jt-sort-flash 650ms ease-out;
 }
 
+/* ------------------------------------------------- refused input (rename) */
+
+/* A refused commit is the one moment where nothing on screen would otherwise
+   change: the red border and the message are ALREADY up — that is what makes
+   the commit refusable — so pressing Enter would read as the key not having
+   registered. A short nudge is the acknowledgement. It is deliberately small
+   and quick; this is a "not yet", not an alarm. */
+@keyframes jt-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15% {
+    transform: translateX(-3px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  65% {
+    transform: translateX(-2px);
+  }
+  85% {
+    transform: translateX(2px);
+  }
+}
+
+.jt-shake {
+  animation: jt-shake 260ms ease-in-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .jt-root .jt-group-caret {
     transition: none;
@@ -385,7 +415,12 @@
      say the same thing for everyone else. */
   .jt-sort-arrow--asc,
   .jt-sort-arrow--desc,
-  .jt-sort-flash {
+  .jt-sort-flash,
+  /* Same bargain for the refused rename: the border, the glyph and the message
+     carry it on their own, and the state that drives the class is cleared on a
+     timer rather than on `animationend`, so nothing here depends on the
+     animation having run. */
+  .jt-shake {
     animation: none;
   }
 }

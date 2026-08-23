@@ -13,9 +13,16 @@ import {
   findCircularKeys,
   migrateLegacyA1Formula,
   migrateLegacyA1Formulas,
+  renameSheetInFormula,
+  renameSheetInFormulas,
+  sheetNameKey,
+  sheetRefText,
+  isBareSheetName,
   ERROR_CIRCULAR,
+  ERROR_QUOTE,
+  ERROR_REF,
 } from './formula'
-import type { FormulaMap } from './formula'
+import type { CrossSheetSheet, FormulaMap } from './formula'
 import {
   DATA_COLUMN_IDS,
   columnDeltaBetween,
@@ -31,6 +38,13 @@ import {
   setLetterSpace,
 } from './columnOrder'
 import { blankColumns } from './blankSheet'
+import {
+  DEFAULT_SHEET_NAME,
+  normalizeSheetName,
+  uniqueSheetName,
+} from './sheetRegistry'
+import type { SheetInfo } from './sheetRegistry'
+import { highlightFormula } from './formulaHighlight'
 import { parseTSV, serializeTSV } from './clipboard'
 import {
   applyFormulaPatch,
@@ -1063,5 +1077,840 @@ check(
 // Leave the space as the rest of the suite (and any later import) expects.
 resetLetterSpace()
 check('the space resets to the built-in schema', columnIdFromLetters('E'), 'age')
+
+/* ══════════════════════════════════════════════════ cross-sheet `@` scope ══ */
+//
+// A two-sheet workbook built by hand. `s1` and `s2` are the ids the engine
+// keys cycles on; the NAMES are what a formula says. They are spelled WITHOUT
+// a space here so the plain `@sheet1` form is what these cases exercise; the
+// spaced, hyphenated, quoted and outright hostile names get their own section
+// further down.
+
+console.log('\n-- cross-sheet: names resolve the way a user would expect --')
+
+check('case is folded', sheetNameKey('SHEET1'), 'sheet1')
+// Inner whitespace is SIGNIFICANT, and these are the assertions that pin it:
+// the greedy `@...(` scan can hold a space, so folding one out would make two
+// tabs a user can plainly tell apart indistinguishable to `@`.
+check('inner space is kept, not folded', sheetNameKey('Q1 Sales'), 'q1 sales')
+check('inner runs are kept verbatim', sheetNameKey('Q1   Sales'), 'q1   sales')
+check(
+  '`Q1 Sales` and `Q1Sales` are DIFFERENT sheets',
+  sheetNameKey('Q1 Sales') === sheetNameKey('Q1Sales'),
+  false,
+)
+// The outer trim stays: the scan trims what it reads, and tab names are stored
+// trimmed, so `@ Sheet1 (a1)` has to find `Sheet1`.
+check('outer padding is trimmed', sheetNameKey('  Q1 Sales '), 'q1 sales')
+
+type Sheet = {
+  id: string
+  name: string
+  rows: Record<string, unknown>[]
+  formulas: FormulaMap
+}
+
+const makeWorkbook = (sheets: Sheet[]) => {
+  const lookup = (name: string): CrossSheetSheet | null => {
+    const key = sheetNameKey(name)
+    const hit = sheets.find((sheet) => sheetNameKey(sheet.name) === key)
+    if (!hit) return null
+    return {
+      id: hit.id,
+      formulas: hit.formulas,
+      getCell: (rowIndex: number, columnId: string) => hit.rows[rowIndex]?.[columnId],
+    }
+  }
+  return {
+    lookup,
+    // The evaluation context a formula ON `sheetId` runs in.
+    ctxFor: (sheetId: string, row: number) => {
+      const home = sheets.find((sheet) => sheet.id === sheetId)!
+      return {
+        currentRow: row,
+        getCell: (r: number, c: string) => home.rows[r]?.[c],
+        sheets: lookup,
+      }
+    },
+    crossFor: (sheetId: string) => ({ sheetId, lookup }),
+  }
+}
+
+// `col1`/`col2` rather than `age`/`visits`: a blank-sheet schema, so `a1`/`b1`
+// have to travel through the A1 letter space to land anywhere.
+const sheet1: Sheet = {
+  id: 's1',
+  name: 'Sheet1',
+  rows: [
+    { col1: 1, col2: 10 },
+    { col1: 2, col2: 20 },
+    { col1: 3, col2: 30 },
+  ],
+  formulas: {},
+}
+const sheet2: Sheet = {
+  id: 's2',
+  name: 'Sheet2',
+  rows: [
+    { col1: 100, col2: 1000 },
+    { col1: 200, col2: 2000 },
+    { col1: 300, col2: 3000 },
+  ],
+  formulas: {},
+}
+const book = makeWorkbook([sheet1, sheet2])
+const blankSpace = ['col1', 'col2', 'col3', 'col4', 'col5', 'col6']
+setLetterSpace(blankSpace)
+
+// Evaluate a formula that lives on `sheetId`, at `row`.
+const xev = (src: string, sheetId = 's2', row = 0) => {
+  const result = evaluateFormula(src, book.ctxFor(sheetId, row))
+  return result.ok ? result.value : result.error
+}
+
+console.log('\n-- cross-sheet: parsing and round-tripping --')
+
+const round = (src: string) => {
+  const ast = parseFormula(src)
+  return ast ? stringifyFormula(ast) : null
+}
+
+check('the user\'s own example parses', round('=@sheet1(a1+b3)'), '=@sheet1(A1 + B3)')
+check('a lone cross-sheet ref', round('=@sheet1(a1)'), '=@sheet1(A1)')
+check('mixed local and cross arithmetic', round('=@sheet1(a1) + b2'), '=@sheet1(A1) + B2')
+check('the name keeps the case it was typed in', round('=@ShEeT1(a1)'), '=@ShEeT1(A1)')
+check('a range inside the scope', round('=SUM(@sheet1(a1:a3))'), '=SUM(@sheet1(A1:A3))')
+check('a call inside the scope', round('=@sheet1(SUM(a1:a3))'), '=@sheet1(SUM(A1:A3))')
+check('a whole expression stays inside the parens', round('=@sheet1(a1 + a2) * 2'), '=@sheet1(A1 + A2) * 2')
+// The one that would silently change meaning if `emit` respected precedence.
+check(
+  'a low-precedence body is never unwrapped',
+  round('=@sheet1(a1 + a2)'),
+  '=@sheet1(A1 + A2)',
+)
+check('nested @ is rejected', parseFormula('=@sheet1(@sheet2(a1))'), null)
+check('nested @ deeper in the body is rejected too', parseFormula('=@sheet1(1 + @sheet2(a1))'), null)
+check('@ with no name is rejected', parseFormula('=@(a1)'), null)
+check('@ with no parens is rejected', parseFormula('=@sheet1'), null)
+check('@ with no body is rejected', parseFormula('=@sheet1()'), null)
+check('@ taking two arguments is rejected', parseFormula('=@sheet1(a1, a2)'), null)
+// `@` after a name is not a sheet scope and never was valid text.
+check('a stray @ is still an error', parseFormula('=a1 @ b1'), null)
+
+console.log('\n-- cross-sheet: evaluation --')
+
+check('the whole scope resolves on the named sheet', xev('=@sheet1(a1+b3)'), 1 + 30)
+check('a lone cross ref', xev('=@sheet1(a1)'), 1)
+check('a lone local ref, for contrast', xev('=a1'), 100)
+check('mixed: cross + local', xev('=@sheet1(a1) + b2'), 1 + 2000)
+check('mixed: local + cross', xev('=a1 + @sheet1(a1)'), 100 + 1)
+check('two scopes in one formula', xev('=@sheet1(a1) + @sheet2(a1)'), 1 + 100)
+check('the name is matched case-insensitively', xev('=@SHEET1(a1)'), 1)
+check('and with the space the tab name really has', xev('=@Sheet1(b2)'), 20)
+check('a range inside the scope sums the OTHER sheet', xev('=SUM(@sheet1(a1:a3))'), 6)
+check('the same range locally, for contrast', xev('=SUM(a1:a3)'), 600)
+check('a builtin nested inside the scope', xev('=@sheet1(SUM(a1:a3))'), 6)
+check('current-row refs use the caller\'s row', xev('=@sheet1(col1)', 's2', 2), 3)
+check('arithmetic inside the scope', xev('=@sheet1(a1 * b1 + 5)'), 1 * 10 + 5)
+check('a scope can be negated', xev('=-@sheet1(b3)'), -30)
+check('a scope can be raised to a power', xev('=@sheet1(a2)^3'), 8)
+
+console.log('\n-- cross-sheet: #REF! --')
+
+check('an unknown sheet name', xev('=@nosuchsheet(a1)'), ERROR_REF)
+check('unknown, mixed with a fine local ref', xev('=@nosuchsheet(a1) + b1'), ERROR_REF)
+// A deleted sheet is exactly an unknown name: the registry no longer lists it,
+// so the lookup that used to answer now returns null.
+const afterDelete = makeWorkbook([sheet2])
+check(
+  'a DELETED sheet',
+  (() => {
+    const r = evaluateFormula('=@sheet1(a1)', {
+      currentRow: 0,
+      getCell: (row: number, col: string) => sheet2.rows[row]?.[col],
+      sheets: afterDelete.lookup,
+    })
+    return r.ok ? r.value : r.error
+  })(),
+  ERROR_REF,
+)
+// The library build (`lib.tsx`) has no sheets and passes no resolver at all.
+check(
+  'no resolver at all degrades to #REF!, never a crash',
+  (() => {
+    const r = evaluateFormula('=@sheet1(a1)', {
+      currentRow: 0,
+      getCell: (row: number, col: string) => sheet2.rows[row]?.[col],
+    })
+    return r.ok ? r.value : r.error
+  })(),
+  ERROR_REF,
+)
+check(
+  'and the local half of such a host is untouched',
+  (() => {
+    const r = evaluateFormula('=a1 + 1', {
+      currentRow: 0,
+      getCell: (row: number, col: string) => sheet2.rows[row]?.[col],
+    })
+    return r.ok ? r.value : r.error
+  })(),
+  101,
+)
+
+console.log('\n-- cross-sheet: circular references --')
+
+// sheet1!0:col1 = @sheet2(a1)  and  sheet2!0:col1 = @sheet1(a1).
+// Neither evaluation recurses (each reads the other's STORED rows), so this
+// cannot hang — the risk is a confident, stale number, which is what the
+// cross-sheet graph exists to replace with `#CIRCULAR!`.
+const cyc1: Sheet = {
+  id: 's1',
+  name: 'Sheet1',
+  rows: [{ col1: 0 }],
+  formulas: { '0:col1': '=@sheet2(a1)' },
+}
+const cyc2: Sheet = {
+  id: 's2',
+  name: 'Sheet2',
+  rows: [{ col1: 0 }],
+  formulas: { '0:col1': '=@sheet1(a1)' },
+}
+const cycBook = makeWorkbook([cyc1, cyc2])
+
+check(
+  'a two-sheet cycle is found from sheet 1',
+  findCircularKeys(cyc1.formulas, cycBook.crossFor('s1')).has('0:col1'),
+  true,
+)
+check(
+  'and from sheet 2',
+  findCircularKeys(cyc2.formulas, cycBook.crossFor('s2')).has('0:col1'),
+  true,
+)
+check(
+  'the recalc marks it, rather than showing a stale number',
+  (recalcFormulas(
+    cyc1.rows as Record<string, unknown>[],
+    cyc1.formulas,
+    undefined,
+    undefined,
+    cycBook.crossFor('s1'),
+  )[0] as Record<string, unknown>)['col1'],
+  ERROR_CIRCULAR,
+)
+
+// A THREE-sheet cycle: s1 → s2 → s3 → s1. The graph has to keep following `@`
+// through sheets it only learned about by walking, not from the caller.
+const three = [
+  { id: 's1', name: 'One', rows: [{ col1: 0 }], formulas: { '0:col1': '=@two(a1)' } },
+  { id: 's2', name: 'Two', rows: [{ col1: 0 }], formulas: { '0:col1': '=@three(a1)' } },
+  { id: 's3', name: 'Three', rows: [{ col1: 0 }], formulas: { '0:col1': '=@one(a1)' } },
+] satisfies Sheet[]
+const threeBook = makeWorkbook(three)
+check(
+  'a three-sheet cycle is found',
+  findCircularKeys(three[0].formulas, threeBook.crossFor('s1')).has('0:col1'),
+  true,
+)
+
+// The near miss: two sheets pointing at each other's DIFFERENT cells is not a
+// cycle, and must still compute.
+const ok1: Sheet = {
+  id: 's1',
+  name: 'Sheet1',
+  rows: [{ col1: 7, col2: 0 }],
+  formulas: { '0:col2': '=@sheet2(a1)' },
+}
+const ok2: Sheet = {
+  id: 's2',
+  name: 'Sheet2',
+  rows: [{ col1: 9, col2: 0 }],
+  formulas: { '0:col2': '=@sheet1(a1)' },
+}
+const okBook = makeWorkbook([ok1, ok2])
+check(
+  'crossing references that do not close a loop are NOT circular',
+  findCircularKeys(ok1.formulas, okBook.crossFor('s1')).size,
+  0,
+)
+check(
+  'and they compute',
+  (recalcFormulas(
+    ok1.rows as Record<string, unknown>[],
+    ok1.formulas,
+    undefined,
+    undefined,
+    okBook.crossFor('s1'),
+  )[0] as Record<string, unknown>)['col2'],
+  9,
+)
+
+// A self-reference reached THROUGH another sheet's name — `@thisSheet(…)`
+// written on the sheet it names — is an ordinary same-sheet cycle and must not
+// escape detection just because it went round the `@`.
+const selfRef: Sheet = {
+  id: 's1',
+  name: 'Sheet1',
+  rows: [{ col1: 0 }],
+  formulas: { '0:col1': '=@sheet1(a1)' },
+}
+const selfBook = makeWorkbook([selfRef])
+check(
+  'a scope naming its OWN sheet still closes the loop',
+  findCircularKeys(selfRef.formulas, selfBook.crossFor('s1')).has('0:col1'),
+  true,
+)
+
+// Without a cross context the old single-sheet behaviour is exactly preserved.
+check(
+  'no cross context: an @ formula is simply not a cycle',
+  findCircularKeys(cyc1.formulas).size,
+  0,
+)
+check(
+  'no cross context: an ordinary cycle is still caught',
+  findCircularKeys({ '0:col1': '=col1' }).has('0:col1'),
+  true,
+)
+
+console.log('\n-- cross-sheet: highlighting inputs --')
+
+const resolve = (name: string) =>
+  sheetNameKey(name) === 'sheet1' ? 's1' : sheetNameKey(name) === 'sheet2' ? 's2' : null
+
+check(
+  'a local ref carries no sheet',
+  JSON.stringify(extractReferences('=a1', 0, resolve)),
+  JSON.stringify([{ columnId: 'col1', dataRow: 0 }]),
+)
+check(
+  'a cross ref carries the sheet it lands on',
+  JSON.stringify(extractReferences('=@sheet1(a1)', 0, resolve)),
+  JSON.stringify([{ columnId: 'col1', dataRow: 0, sheetId: 's1' }]),
+)
+check(
+  'a mixed formula reports both, distinctly',
+  JSON.stringify(extractReferences('=@sheet1(a1) + a1', 0, resolve)),
+  JSON.stringify([
+    { columnId: 'col1', dataRow: 0, sheetId: 's1' },
+    { columnId: 'col1', dataRow: 0 },
+  ]),
+)
+check(
+  'an unresolvable @ highlights nothing at all',
+  extractReferences('=@nosuchsheet(a1)', 0, resolve).length,
+  0,
+)
+check(
+  'no resolver: the @ body is skipped, never flattened onto the local sheet',
+  extractReferences('=@sheet1(a1) + b1', 0).length,
+  1,
+)
+check(
+  'a cross range reports every cell, all on the other sheet',
+  extractReferences('=@sheet1(a1:a3)', 0, resolve).every((r) => r.sheetId === 's1'),
+  true,
+)
+
+console.log('\n-- cross-sheet: fill translation leaves the scope alone --')
+
+check(
+  'the local half shifts, the cross half does not',
+  translateFormula('=@sheet1(a1) + b2', 3),
+  '=@sheet1(A1) + B5',
+)
+check(
+  'a formula that is ONLY a scope comes back byte-identical',
+  translateFormula('=@sheet1(a1)', 3),
+  '=@sheet1(a1)',
+)
+check(
+  'a range inside a scope is left alone too',
+  translateFormula('=SUM(@sheet1(a1:a3)) + b1', 2),
+  '=SUM(@sheet1(A1:A3)) + B3',
+)
+
+console.log('\n-- cross-sheet: renaming a tab rewrites the formulas --')
+
+check(
+  'the reference follows the rename',
+  renameSheetInFormula('=@sheet1(a1)', 'Sheet1', 'Budget'),
+  '=@Budget(A1)',
+)
+check(
+  'however it was spelled',
+  renameSheetInFormula('=@SHEET1(a1) + @Sheet1(b1)', 'Sheet1', 'Budget'),
+  '=@Budget(A1) + @Budget(B1)',
+)
+// A space in the new name is now simply KEPT — the whole point of the greedy
+// scan. It used to come back as `@Q1Sales`, a name the user never chose.
+check(
+  'a new name with a space stays spelled the way the tab is',
+  renameSheetInFormula('=@sheet1(a1)', 'Sheet1', 'Q1 Sales'),
+  '=@Q1 Sales(A1)',
+)
+check(
+  'and it resolves back to that tab, unlike its space-free twin',
+  [
+    sheetNameKey('Q1 Sales') === sheetNameKey('Q1 Sales'),
+    sheetNameKey('Q1Sales') === sheetNameKey('Q1 Sales'),
+  ].join(','),
+  'true,false',
+)
+// Renaming ACROSS the two forms, in both directions. This is the case that
+// silently broke every dependent formula before quoting existed.
+check(
+  'a rename into a name that needs quotes gets them',
+  renameSheetInFormula('=@sheet1(a1)', 'Sheet1', "Bob's (old) Data"),
+  "=@'Bob''s (old) Data'(A1)",
+)
+check(
+  'a rename OUT of a quoted name drops them again',
+  renameSheetInFormula("=@'Bob''s (old) Data'(a1)", "Bob's (old) Data", 'Budget'),
+  '=@Budget(A1)',
+)
+check(
+  'a formula that spelled the old name quoted is found too',
+  renameSheetInFormula("=@'Sheet1'(a1)", 'Sheet1', 'Budget'),
+  '=@Budget(A1)',
+)
+check(
+  'and one that spelled a spaced name bare',
+  renameSheetInFormula('=@Q1 Sales(a1)', 'Q1 Sales', "Bob's Data"),
+  "=@Bob's Data(A1)",
+)
+check(
+  'a rename to nothing is not a rename, and rewrites nothing',
+  renameSheetInFormula('=@sheet1(a1)', 'Sheet1', '   '),
+  '=@sheet1(a1)',
+)
+check(
+  'a reference to a DIFFERENT sheet is untouched',
+  renameSheetInFormula('=@sheet2(a1)', 'Sheet1', 'Budget'),
+  '=@sheet2(a1)',
+)
+check(
+  'a formula with no @ is handed back byte-identical',
+  renameSheetInFormula('=a1  +   b1', 'Sheet1', 'Budget'),
+  '=a1  +   b1',
+)
+check(
+  'a non-formula is handed back byte-identical',
+  renameSheetInFormula('plain text with an @ in it', 'Sheet1', 'Budget'),
+  'plain text with an @ in it',
+)
+check(
+  'an unparseable formula is handed back byte-identical',
+  renameSheetInFormula('=@sheet1((( ', 'Sheet1', 'Budget'),
+  '=@sheet1((( ',
+)
+check(
+  'a map with nothing to rewrite comes back by identity',
+  (() => {
+    const map: FormulaMap = { '0:col1': '=a1+1' }
+    return renameSheetInFormulas(map, 'Sheet1', 'Budget') === map
+  })(),
+  true,
+)
+check(
+  'a map that changed comes back rewritten',
+  JSON.stringify(
+    renameSheetInFormulas({ '0:col1': '=@sheet1(a1)' }, 'Sheet1', 'Budget'),
+  ),
+  JSON.stringify({ '0:col1': '=@Budget(A1)' }),
+)
+// The whole point of the rewrite: the value survives the rename.
+check(
+  'the renamed formula computes what it did before',
+  (() => {
+    const renamedBook = makeWorkbook([
+      { ...sheet1, name: 'Budget' },
+      sheet2,
+    ])
+    const src = renameSheetInFormula('=@sheet1(a1+b3)', 'Sheet1', 'Budget')
+    const r = evaluateFormula(src, {
+      currentRow: 0,
+      getCell: (row: number, col: string) => sheet2.rows[row]?.[col],
+      sheets: renamedBook.lookup,
+    })
+    return r.ok ? r.value : r.error
+  })(),
+  31,
+)
+// ...and without the rewrite it would NOT — this is the regression the rewrite
+// exists to prevent, asserted rather than assumed.
+check(
+  'an un-rewritten formula would have broken',
+  (() => {
+    const renamedBook = makeWorkbook([{ ...sheet1, name: 'Budget' }, sheet2])
+    const r = evaluateFormula('=@sheet1(a1+b3)', {
+      currentRow: 0,
+      getCell: (row: number, col: string) => sheet2.rows[row]?.[col],
+      sheets: renamedBook.lookup,
+    })
+    return r.ok ? r.value : r.error
+  })(),
+  ERROR_REF,
+)
+
+/* ═════════════════════════════════ a sheet may be called anything at all ══ */
+//
+// The rule used to be that a tab name had to be a formula IDENTIFIER, because
+// `@name(` tokenized one. That restricted the user's data to suit the app's
+// grammar, and it is gone. The grammar changed instead:
+//
+//   BARE    everything between the `@` and the FIRST `(`, trimmed.
+//   QUOTED  `@'…'(` for the one thing the scan cannot hold — a `(` in the name
+//           — with `''` standing for a literal quote.
+//
+// This section is the proof, so it uses names nobody would choose: hyphens,
+// spaces, apostrophes, a leading digit, unicode, unbalanced parens, and the
+// hostile string the design was stress-tested with.
+
+console.log('\n-- names: anything but empty and duplicate --')
+
+const WILD = [
+  { id: 'w1', name: 'Q1-Sales', rows: [{ col1: 11 }], formulas: {} },
+  { id: 'w2', name: 'Q1 Sales', rows: [{ col1: 22 }], formulas: {} },
+  { id: 'w3', name: "Bob's Data", rows: [{ col1: 33 }], formulas: {} },
+  { id: 'w4', name: '2024', rows: [{ col1: 44 }], formulas: {} },
+  { id: 'w5', name: 'Ventes Q1 — Été', rows: [{ col1: 55 }], formulas: {} },
+  { id: 'w6', name: 'Q1(a1)', rows: [{ col1: 66 }], formulas: {} },
+  { id: 'w7', name: '@@@q1!@@sa((kle)((sdf', rows: [{ col1: 77 }], formulas: {} },
+  { id: 'w8', name: "Bob's (old) Data", rows: [{ col1: 88 }], formulas: {} },
+  { id: 'w9', name: 'Q1Sales', rows: [{ col1: 99 }], formulas: {} },
+] satisfies Sheet[]
+const wild = makeWorkbook(WILD)
+const wev = (src: string) => {
+  const r = evaluateFormula(src, {
+    currentRow: 0,
+    getCell: () => undefined,
+    sheets: wild.lookup,
+  })
+  return r.ok ? r.value : r.error
+}
+
+// The headline case. `@Q1-Sales(a1)` used to parse cleanly as "sheet `Q1`,
+// minus the call `Sales(a1)`" and hand back a confident wrong number; the
+// greedy scan makes it mean the only thing it can mean.
+check('a hyphen is part of the name, not a minus', wev('=@Q1-Sales(a1)'), 11)
+check('a space is part of the name too', wev('=@Q1 Sales(a1)'), 22)
+check('and is NOT interchangeable with no space', wev('=@Q1Sales(a1)'), 99)
+check('an apostrophe mid-name needs no quoting', wev("=@Bob's Data(a1)"), 33)
+check('a name that is all digits', wev('=@2024(a1)'), 44)
+check('unicode, accents and an em dash', wev('=@Ventes Q1 — Été(a1)'), 55)
+check('padding around the name is trimmed off', wev('=@   Q1-Sales   (a1)'), 11)
+check('the name is still matched case-insensitively', wev('=@q1-SALES(a1)'), 11)
+
+// The quoted form: the same sheets, and the ones the bare form cannot reach.
+check('quoting a name that did not need it changes nothing', wev("=@'Q1 Sales'(a1)"), 22)
+check('a name holding parens, reachable only quoted', wev("=@'Q1(a1)'(a1)"), 66)
+check(
+  'a doubled quote is one literal quote',
+  wev("=@'Bob''s (old) Data'(a1)"),
+  88,
+)
+check(
+  'the hostile name, end to end',
+  wev("=@'@@@q1!@@sa((kle)((sdf'(a1)"),
+  77,
+)
+
+console.log('\n-- names: the bare/quoted grammar itself --')
+
+// `@name` is ONLY ever a scope, and a scope requires a parenthesised body. So
+// `@Q1` can never stand alone as a term, and there is nothing for a following
+// `-` to subtract from — which is exactly why scanning greedily to the first
+// `(` cannot get any formula wrong. Someone who means the subtraction writes
+// this, and the scan still yields `Q1`.
+check(
+  'sheet-minus-call is written with the body, and still parses that way',
+  round('=@Q1(a1) - Sales(b1)'),
+  '=@Q1(A1) - SALES(B1)',
+)
+check(
+  'the bare name wins whenever it resolves, hint or no hint',
+  (() => {
+    const both = makeWorkbook([
+      ...WILD,
+      { id: 'wq', name: 'Q1', rows: [{ col1: 1234 }], formulas: {} },
+    ])
+    const r = evaluateFormula('=@Q1(a1)', {
+      currentRow: 0,
+      getCell: () => undefined,
+      sheets: both.lookup,
+    })
+    return r.ok ? r.value : r.error
+  })(),
+  1234,
+)
+// Nothing is guessed: the wider reading only picks the ERROR CODE.
+check(
+  'a truncated `(` name says #QUOTE!, not an unexplainable #REF!',
+  wev('=@Q1(a1)'),
+  ERROR_QUOTE,
+)
+check(
+  'an ordinary typo is still a plain #REF!',
+  wev('=@nosuchsheet(a1)'),
+  ERROR_REF,
+)
+check(
+  'and so is a truncation whose wider reading names nothing either',
+  wev('=@Q1(b1)'),
+  ERROR_REF,
+)
+
+check('an unterminated quote is a parse error', parseFormula("=@'Q1 Sales(a1)"), null)
+check('...and is never truncated into a name', parseFormula("=@'Q1 Sales(a1)") === null, true)
+check('an empty quoted name is rejected', parseFormula("=@''(a1)"), null)
+check('a quoted name with no body is rejected', parseFormula("=@'Q1 Sales'"), null)
+check('junk between the close quote and the body is rejected', parseFormula("=@'Q1' x(a1)"), null)
+check('a bare name with no body is rejected', parseFormula('=@Q1 Sales'), null)
+check('a bare name that is only padding is rejected', parseFormula('=@   (a1)'), null)
+
+console.log('\n-- names: bare vs quoted emission --')
+
+// Bare whenever the name survives the greedy scan byte-for-byte; quoted
+// otherwise. `spell` goes in through the always-legal quoted form so the
+// stringifier is the only thing choosing.
+const spell = (name: string) => {
+  const ast = parseFormula(`=@'${name.replace(/'/g, "''")}'(a1)`)
+  return ast ? stringifyFormula(ast) : null
+}
+
+check('a plain identifier stays bare', spell('Sheet1'), '=@Sheet1(A1)')
+check('a space does not need quotes any more', spell('Q1 Sales'), '=@Q1 Sales(A1)')
+check('nor does a hyphen', spell('Q1-Sales'), '=@Q1-Sales(A1)')
+check('nor a leading digit', spell('2024'), '=@2024(A1)')
+check('nor unicode', spell('Ventes Q1 — Été'), '=@Ventes Q1 — Été(A1)')
+check('nor an apostrophe that is not leading', spell("Bob's Data"), "=@Bob's Data(A1)")
+check('a `(` forces quotes', spell('Q1(a1)'), "=@'Q1(a1)'(A1)")
+check(
+  'and a quote inside a quoted name is doubled',
+  spell("Bob's (old) Data"),
+  "=@'Bob''s (old) Data'(A1)",
+)
+check(
+  'a LEADING quote forces quotes, or the reader would eat it',
+  spell("'quoted'"),
+  "=@'''quoted'''(A1)",
+)
+check('outer padding forces quotes, because the scan would trim it', spell(' pad '), "=@' pad '(A1)")
+check('the hostile name is quoted', spell('@@@q1!@@sa((kle)((sdf'), "=@'@@@q1!@@sa((kle)((sdf'(A1)")
+
+check('isBareSheetName agrees with what was emitted', [
+  isBareSheetName('Sheet1'),
+  isBareSheetName('Q1 Sales'),
+  isBareSheetName("Bob's Data"),
+  isBareSheetName('Q1(a1)'),
+  isBareSheetName("'quoted'"),
+  isBareSheetName(' pad '),
+  isBareSheetName(''),
+].join(','), 'true,true,true,false,false,false,false')
+
+// THE invariant: whatever is emitted, re-parsing it names the SAME sheet.
+// Anything less and a rename or a fill quietly repoints a formula.
+const NAME_SET = [
+  'Sheet1',
+  'Q1 Sales',
+  'Q1-Sales',
+  '2024',
+  "Bob's Data",
+  "Bob's (old) Data",
+  'Ventes Q1 — Été',
+  'Q1(a1)',
+  "'quoted'",
+  ' pad ',
+  '@@@q1!@@sa((kle)((sdf',
+  "it's a '(' problem",
+  ')unbalanced(',
+  '@',
+  "''",
+]
+for (const name of NAME_SET) {
+  check(
+    `round trip: ${JSON.stringify(name)}`,
+    (() => {
+      const src = `=@${sheetRefText(name)}(a1)`
+      const once = parseFormula(src)
+      if (!once || once.kind !== 'sheet' || once.name !== name) return `parse: ${src}`
+      const again = parseFormula(stringifyFormula(once))
+      return again && again.kind === 'sheet' ? again.name : `reparse: ${src}`
+    })(),
+    name,
+  )
+}
+
+console.log('\n-- names: the overlay lexes a quoted name as ONE token --')
+
+const wildResolve = (name: string) =>
+  WILD.find((sheet) => sheetNameKey(sheet.name) === sheetNameKey(name))?.id ?? null
+const whl = (src: string) =>
+  highlightFormula(src, { resolveSheet: wildResolve, columnsOfSheet: () => ['col1'] })
+const wkind = (src: string, text: string) =>
+  whl(src).find((token) => token.text === text)?.kind ?? 'missing'
+
+for (const src of [
+  "=@'Q1 Sales'(a1)",
+  '=@Q1-Sales(a1) + 1',
+  "=@'Bob''s (old) Data'(a1)",
+  "=@'Q1 Sa",
+  '=@Q1 Sal',
+  "=@''(a1)",
+  '=@@@@q1!@@sa((kle)((sdf(a1)',
+]) {
+  check(`overlay reassembles ${JSON.stringify(src)}`, whl(src).map((t) => t.text).join(''), src)
+}
+
+check('a quoted name is one token, quotes included', wkind("=@'Q1 Sales'(a1)", "@'Q1 Sales'"), 'sheet')
+check('a bare name with a space is one token too', wkind('=@Q1 Sales(a1)', '@Q1 Sales'), 'sheet')
+check('a hyphenated one is not split at the minus', wkind('=@Q1-Sales(a1)', '@Q1-Sales'), 'sheet')
+check(
+  'the doubled quote stays inside the token',
+  wkind("=@'Bob''s (old) Data'(a1)", "@'Bob''s (old) Data'"),
+  'sheet',
+)
+// A draft the parser would refuse must not read as "understood".
+check('an unterminated quote is never coloured', wkind("=@'Q1 Sales", "@'Q1 Sales"), 'plain')
+check('a name that resolves to nothing stays plain', wkind('=@nope(a1)', '@nope'), 'plain')
+check(
+  'a resolved scope still checks its refs against THAT sheet',
+  wkind("=@'Q1 Sales'(a1)", 'a1'),
+  'ref',
+)
+
+check(
+  'the truncated-at-a-paren case is flagged, not just left grey',
+  wkind('=@Q1(a1)', '@Q1'),
+  'sheet-quote',
+)
+check(
+  'but only when the wider reading really names a tab',
+  wkind('=@Q1(b1)', '@Q1'),
+  'plain',
+)
+check(
+  'and never over a name that resolved on its own',
+  wkind('=@Q1-Sales(a1)', '@Q1-Sales'),
+  'sheet',
+)
+
+console.log('\n-- names: the registry and the resolver agree on what collides --')
+
+// `uniqueSheetName` decides which names may COEXIST; `sheetNameKey` decides
+// which names `@` can TELL APART. If those two ever disagree, a workbook can
+// hold two sheets one reference resolves to arbitrarily — the exact bug
+// uniqueness exists to prevent — so this asserts they are the same function.
+const REG: SheetInfo[] = [
+  { id: 'r1', name: 'Data' },
+  { id: 'r2', name: 'Q1 Sales' },
+]
+check('an exact duplicate is suffixed', uniqueSheetName('Data', REG), 'Data2')
+check('a case-variant duplicate is too, because @ folds case', uniqueSheetName('DATA', REG), 'DATA2')
+check(
+  'a space-free twin is NOT a duplicate, because @ no longer folds space',
+  uniqueSheetName('Q1Sales', REG),
+  'Q1Sales',
+)
+check('renaming a sheet to its own name is not a clash', uniqueSheetName('Data', REG, 'r1'), 'Data')
+check(
+  'every name the registry allows side by side resolves distinctly',
+  (() => {
+    const kept: SheetInfo[] = []
+    for (const raw of ['Data', 'DATA', 'Q1 Sales', 'Q1Sales', ' Data ', '2024']) {
+      kept.push({ id: `k${kept.length}`, name: uniqueSheetName(normalizeSheetName(raw, 'x'), kept) })
+    }
+    return new Set(kept.map((sheet) => sheetNameKey(sheet.name))).size === kept.length
+  })(),
+  true,
+)
+
+// The relaxed name rules: trim and clamp, and nothing else.
+check('a space survives normalisation now', normalizeSheetName('Q1 Sales', 'x'), 'Q1 Sales')
+check('so does a hyphen', normalizeSheetName('Q1-Sales', 'x'), 'Q1-Sales')
+check('a leading digit is no longer prefixed', normalizeSheetName('2024', 'x'), '2024')
+check('unicode is left alone', normalizeSheetName('Ventes Q1 — Été', 'x'), 'Ventes Q1 — Été')
+check('parens survive too, and the quoted form can reach them', normalizeSheetName('Q1(a1)', 'x'), 'Q1(a1)')
+check('the hostile name survives whole', normalizeSheetName('@@@q1!@@sa((kle)((sdf', 'x'), '@@@q1!@@sa((kle)((sdf')
+check('padding is still trimmed', normalizeSheetName('   Q1 Sales   ', 'x'), 'Q1 Sales')
+check('empty still falls back', normalizeSheetName('   ', 'Sheet 1'), 'Sheet 1')
+check('a non-string still falls back', normalizeSheetName(null, 'Sheet 1'), 'Sheet 1')
+check('the length clamp still bites, and leaves no trailing padding', normalizeSheetName(`${'a'.repeat(59)}   tail`, 'x'), 'a'.repeat(59))
+check('the default name has its space back', DEFAULT_SHEET_NAME, 'Sheet 1')
+
+console.log('\n-- cross-sheet: nothing that used to parse changed meaning --')
+
+// `@` was a tokenizer error before, so no stored formula can contain one; and
+// every pre-`@` form still round-trips and evaluates identically.
+for (const src of ['=age*2', '=SUM(age[1]:age[4])', '=E1+F2', '=ROUND(age/3, 2)']) {
+  resetLetterSpace()
+  check(`${src} still round-trips`, round(src), round(src))
+}
+setLetterSpace(blankSpace)
+check('SUM is still the builtin, not a sheet', xev('=SUM(a1:a2)'), 300)
+check('a sheet may even be NAMED sum without shadowing it', parseFormula('=@sum(a1)') !== null, true)
+
+console.log('\n-- cross-sheet: the editor overlay tokens --')
+
+// The contract the whole overlay rests on: the spans put back together are the
+// input, character for character. Break it and the colours slide out from under
+// the text in the <input> sitting on top.
+setLetterSpace(blankSpace)
+const hl = (src: string) =>
+  highlightFormula(src, { resolveSheet: resolve, columnsOfSheet: () => ['col1', 'col2'] })
+const kindOf = (src: string, text: string) =>
+  hl(src).find((token) => token.text === text)?.kind ?? 'missing'
+
+for (const src of [
+  '=@sheet1(a1+b3)',
+  '=@sheet1( a1 ) + b2',
+  '=SUM(a1:a3) * 2',
+  '=@sheat1(a1)',
+  '=@',
+  '=',
+  '=@sheet1(',
+  '=  a1   +  ',
+  '=$E$1 + age[2]',
+  '=1.5 + .5',
+  '=~!weird`',
+]) {
+  check(`overlay reassembles ${JSON.stringify(src)}`, hl(src).map((t) => t.text).join(''), src)
+}
+
+check('a resolving @name is a sheet token', kindOf('=@sheet1(a1)', '@sheet1'), 'sheet')
+check('a mis-typed @name is NOT', kindOf('=@sheat1(a1)', '@sheat1'), 'plain')
+check('case does not matter to the highlight either', kindOf('=@SHEET1(a1)', '@SHEET1'), 'sheet')
+check('a real column highlights as a ref', kindOf('=a1', 'a1'), 'ref')
+check('a nonexistent column does not', kindOf('=zz9', 'zz9'), 'plain')
+check('a function name is its own kind', kindOf('=SUM(a1:a2)', 'SUM'), 'func')
+check('a number is its own kind', kindOf('=1 + a1', '1'), 'number')
+check(
+  'inside a scope, refs are checked against THAT sheet',
+  kindOf('=@sheet1(a1)', 'a1'),
+  'ref',
+)
+check(
+  'a column the other sheet does not have stays plain',
+  highlightFormula('=@sheet1(c1)', {
+    resolveSheet: resolve,
+    columnsOfSheet: () => ['col1', 'col2'],
+  }).find((t) => t.text === 'c1')?.kind,
+  'plain',
+)
+check(
+  'the scope closes at its own paren, so a later ref is local again',
+  highlightFormula('=@sheet1(a1) + a1', {
+    resolveSheet: resolve,
+    columnsOfSheet: () => [],
+  }).filter((t) => t.text === 'a1').length,
+  2,
+)
+check('a non-formula draft is one plain run', hl('hello @sheet1').length, 1)
+check('an empty draft is no tokens at all', hl('').length, 0)
+
+resetLetterSpace()
+check('the space resets again for anything downstream', columnIdFromLetters('E'), 'age')
 
 console.log(`\n${passed} passed, ${failed} failed\n`)

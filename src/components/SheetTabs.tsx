@@ -1,7 +1,9 @@
 import React from 'react'
-import { ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { AlertCircle, ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
 import Tooltip from '../ui/Tooltip'
 import { useConfirm } from '../ui'
+import { sheetNameKey } from '../formula'
 import type { SheetInfo } from '../sheetRegistry'
 
 // The tab strip: one tab per sheet, a "+" to add one, rename in place, delete
@@ -25,6 +27,95 @@ import type { SheetInfo } from '../sheetRegistry'
 // used — a hidden scrollbar on a strip that can overflow is how content becomes
 // unreachable on a trackpad-less machine — the strip is simply short enough that
 // the browser's overlay scrollbar is unobtrusive.
+
+// ── Rename validation ───────────────────────────────────────────────────────
+//
+// There are exactly TWO rules on a sheet name: non-empty, and unique. Nothing
+// else — spaces, hyphens, brackets, leading digits, unicode, apostrophes all
+// belong to the user. The grammar used to impose a third (a name had to be a
+// formula identifier) and this box used to enforce it by filtering keystrokes;
+// `@name(expr)` now reads everything up to the first `(`, with a quoted `@'…'`
+// form for the rest, so there is nothing left to filter.
+//
+// What is left is worth SAYING rather than silently repairing. Committing
+// `Data` next to an existing `Data` used to produce `Data2` — a name the user
+// did not choose, appearing without explanation. Now the box says why it will
+// not take it, and refuses until it is fixed.
+//
+// `uniqueSheetName` still auto-suffixes on the programmatic paths (loading a
+// hand-edited registry, minting a new tab) because there is nobody there to
+// ask. This is the one path with a person in it.
+const validateName = (
+  raw: string,
+  sheets: readonly SheetInfo[],
+  selfId: string,
+): string | null => {
+  const name = raw.trim()
+  if (!name) return "Sheet name can't be empty"
+  const key = sheetNameKey(name)
+  // The same key `@` resolves on, so what this refuses is exactly what a
+  // formula could not have told apart.
+  const clash = sheets.find((s) => s.id !== selfId && sheetNameKey(s.name) === key)
+  return clash ? `A sheet called "${clash.name}" already exists` : null
+}
+
+/**
+ * The message under an invalid rename box.
+ *
+ * Portalled and `position: fixed` for the same reason `Tooltip` is: the tab
+ * scroller is `overflow-x: auto`, which computes the y axis to `auto` as well,
+ * so an absolutely-positioned bubble inside it would be clipped by the 32px
+ * strip it is trying to escape.
+ *
+ * It is NOT the shared `Tooltip`. That component is vendored verbatim from the
+ * shared UI and must not diverge, and it is a hover/focus HINT: one dark slate
+ * bubble, shown on pointer-in. This has to be visible the whole time the value
+ * is invalid, whether or not anything is hovered, and it has to carry the rose
+ * danger tone the rest of the app uses. Reaching those through `Tooltip` would
+ * mean adding a `tone` and an `open` prop to a file that is explicitly frozen.
+ */
+function InvalidMessage({
+  anchorRef,
+  message,
+  id,
+}: {
+  anchorRef: React.RefObject<HTMLInputElement | null>
+  message: string
+  id: string
+}) {
+  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null)
+
+  React.useLayoutEffect(() => {
+    const place = () => {
+      const rect = anchorRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setPos({ x: Math.max(8, rect.left), y: rect.bottom + 6 })
+    }
+    place()
+    // Capture-phase scroll: the tab strip is its own scroller, and it scrolls
+    // the active tab into view — including the one being renamed.
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [anchorRef, message])
+
+  if (!pos || typeof document === 'undefined') return null
+  return createPortal(
+    <div
+      id={id}
+      role="tooltip"
+      style={{ position: 'fixed', left: pos.x, top: pos.y, maxWidth: '16rem' }}
+      className="pointer-events-none z-[200] flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-2xs font-semibold leading-snug text-rose-700 shadow-lg"
+    >
+      <AlertCircle size={14} aria-hidden="true" className="shrink-0" />
+      <span>{message}</span>
+    </div>,
+    document.body,
+  )
+}
 
 type Props = {
   /** Every sheet, in tab order. Never empty (see `withoutSheet`). */
@@ -73,13 +164,50 @@ export default function SheetTabs({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing?.id])
 
+  // Live, on every keystroke, so the border and the message appear as the
+  // problem does rather than at the end. `null` while the draft is fine.
+  const nameError = editing ? validateName(editing.value, sheets, editing.id) : null
+
+  // The refused-commit nudge. Held in state (not by touching `classList`, which
+  // the next render would wipe) and cleared on a TIMER, not on `animationend`:
+  // under `prefers-reduced-motion` the animation is `none` and that event never
+  // fires, which would leave the class stuck on.
+  const [shaking, setShaking] = React.useState(false)
+  const shakeTimer = React.useRef<number | null>(null)
+  const clearShake = React.useCallback(() => {
+    if (shakeTimer.current !== null) window.clearTimeout(shakeTimer.current)
+    shakeTimer.current = null
+    setShaking(false)
+  }, [])
+  React.useEffect(() => clearShake, [clearShake])
+
+  const refuseCommit = () => {
+    clearShake()
+    // A CSS animation only restarts once the class has actually left the
+    // element, so a second refusal inside the 260ms window needs one render
+    // without it. Pressing Enter twice on the same bad name must nudge twice.
+    window.requestAnimationFrame(() => setShaking(true))
+    shakeTimer.current = window.setTimeout(() => setShaking(false), 600)
+  }
+
   const commitRename = () => {
     if (!editing) return
-    // An empty / whitespace name is not an error to shout about — the store
-    // clamps it back to the existing name (`normalizeSheetName`), so committing
-    // nothing simply leaves the tab as it was.
+    // Refuse, do not repair. Renaming to `Data` beside an existing `Data` used
+    // to commit `Data2`; that is the silent substitution this whole change
+    // exists to stop. The box stays open, still holding what was typed.
+    if (validateName(editing.value, sheets, editing.id)) {
+      refuseCommit()
+      inputRef.current?.focus()
+      return
+    }
     onRename(editing.id, editing.value)
     setEditing(null)
+    clearShake()
+  }
+
+  const cancelRename = () => {
+    setEditing(null)
+    clearShake()
   }
 
   const askDelete = async (sheet: SheetInfo) => {
@@ -163,30 +291,61 @@ export default function SheetTabs({
           const isEditing = editing?.id === sheet.id
 
           if (isEditing) {
+            const errorId = `jt-sheet-rename-error-${sheet.id}`
             return (
-              <input
-                key={sheet.id}
-                ref={inputRef}
-                value={editing.value}
-                onChange={(e) =>
-                  setEditing({ id: sheet.id, value: e.target.value })
-                }
-                onBlur={commitRename}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    commitRename()
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault()
-                    setEditing(null)
-                  }
-                  // The grid binds a lot of single keys; while a tab name is
-                  // being typed none of them are meant for it.
-                  e.stopPropagation()
-                }}
-                aria-label={`Rename ${sheet.name}`}
-                className="h-8 w-28 shrink-0 rounded-lg border border-sky-400 bg-white px-2 text-xs font-semibold text-slate-900 outline-none"
-              />
+              <React.Fragment key={sheet.id}>
+                <input
+                  ref={inputRef}
+                  value={editing.value}
+                  // NOT filtered. Every character the user types survives —
+                  // spaces, hyphens, brackets, unicode, the lot. The two rules
+                  // that remain are checked, shown and enforced instead of
+                  // being applied behind the user's back.
+                  onChange={(e) => {
+                    setEditing({ id: sheet.id, value: e.target.value })
+                    // A refusal is about the value that was refused; typing is
+                    // the fix, so the nudge stops the moment they do.
+                    clearShake()
+                  }}
+                  // `onBlur` CANCELS an invalid draft rather than refusing it.
+                  // Refusing would mean pulling focus back into a box the user
+                  // is trying to leave — a trap — and Escape already means
+                  // "leave this alone", so clicking away means the same thing.
+                  onBlur={() => {
+                    if (nameError) cancelRename()
+                    else commitRename()
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      commitRename()
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      // Escape gets out of an INVALID state as cleanly as a
+                      // valid one: the tab keeps the name it had.
+                      cancelRename()
+                    }
+                    // The grid binds a lot of single keys; while a tab name is
+                    // being typed none of them are meant for it.
+                    e.stopPropagation()
+                  }}
+                  aria-label={`Rename ${sheet.name}`}
+                  aria-invalid={nameError ? true : undefined}
+                  aria-describedby={nameError ? errorId : undefined}
+                  className={`h-8 w-28 shrink-0 rounded-lg border bg-white px-2 text-xs font-semibold text-slate-900 outline-none ${
+                    nameError
+                      ? 'border-rose-400 ring-1 ring-rose-200'
+                      : 'border-sky-400'
+                  } ${shaking ? 'jt-shake' : ''}`}
+                />
+                {nameError ? (
+                  <InvalidMessage
+                    anchorRef={inputRef}
+                    message={nameError}
+                    id={errorId}
+                  />
+                ) : null}
+              </React.Fragment>
             )
           }
 

@@ -10,10 +10,24 @@
 // Keys are `<dataRowIndex>:<columnId>` — the SAME data/definition-space
 // coordinates the grid keys formatting on, so a highlight lines up with the cell
 // through sort / filter / pagination exactly like a per-cell format does.
+//
+// ── Cross-sheet references paint nothing ────────────────────────────────────
+//
+// `=@sheet1(a1)` typed on sheet2 reads sheet1's A1. The grid shows one sheet at
+// a time, so outlining sheet2's OWN A1 — the cell that happens to share those
+// coordinates — would assert something false about a formula the user is in the
+// middle of writing, and it would look exactly like a correct highlight. So a
+// ref that carries a `sheetId` is kept only when that sheet is the one on
+// screen (which covers `@sheet2(a1)` written while standing on sheet2, where
+// the highlight IS right), and dropped otherwise.
+//
+// The filter lives in `set` rather than in `has` on purpose: `has` is called
+// once per painted cell, per render, and it stays the single map lookup it has
+// always been.
 
 import React from 'react'
 
-export type CellRef = { columnId: string; dataRow: number }
+export type CellRef = { columnId: string; dataRow: number; sheetId?: string }
 
 const refKey = (columnId: string, dataRow: number) => `${dataRow}:${columnId}`
 
@@ -50,10 +64,18 @@ class FormulaRefsStore {
    * Replace the referenced set. No-ops (no version bump, no notify) when the set
    * is unchanged, so re-publishing the same refs on an unrelated keystroke does
    * not thrash the grid.
+   *
+   * `currentSheetId` is the sheet the grid is showing. Refs that name a
+   * DIFFERENT sheet are discarded here — see the note at the top of this file.
+   * Omitting it discards every cross-sheet ref, which is the right answer for a
+   * host that has no sheets at all (the library build).
    */
-  set(refs: CellRef[]): void {
+  set(refs: CellRef[], currentSheetId?: string): void {
     const next = new Set<string>()
-    for (const ref of refs) next.add(refKey(ref.columnId, ref.dataRow))
+    for (const ref of refs) {
+      if (ref.sheetId && ref.sheetId !== currentSheetId) continue
+      next.add(refKey(ref.columnId, ref.dataRow))
+    }
     if (next.size === this.keys.size) {
       let same = true
       for (const key of next) {
