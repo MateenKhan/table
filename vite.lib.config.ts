@@ -38,14 +38,14 @@ export default defineConfig({
       insertTypesEntry: true,
       include: ['src'],
       // Ship only real types — no test harnesses or the demo entry point.
-      exclude: ['src/**/*.test.ts', 'src/main.tsx'],
+      exclude: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'src/test/**', 'src/main.tsx'],
     }),
   ],
   build: {
     lib: {
-      entry: 'src/lib.tsx',
+      entry: { table: 'src/lib.tsx', list: 'src/list/index.ts' },
       formats: ['es'],
-      fileName: 'table',
+      fileName: (_format, entryName) => `${entryName}.js`,
       cssFileName: 'style',
     },
     rollupOptions: {

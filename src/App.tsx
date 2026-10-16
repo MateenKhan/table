@@ -223,6 +223,7 @@ type AppProps = {
   // export as references (they need re-uploading on another machine). Undefined
   // = embed everything regardless of size.
   exportEmbedLimit?: number
+  readOnly?: boolean
 }
 
 // Stable identity so an embed that passes no attachment config never re-renders
@@ -246,6 +247,25 @@ const BLANK_SHEET_ROWS = 20
  * either; real data past 25 rows still pages, which is what a pager is for.
  */
 const STANDALONE_PAGE_SIZE = 25
+
+const VIEW_TOOLBAR_IDS = new Set(['settings', 'help', 'pagination', 'profiles'])
+
+function toolbarActions<A extends { id: string }>(readOnly: boolean, actions: A[]) {
+  return readOnly ? actions.filter((action) => VIEW_TOOLBAR_IDS.has(action.id)) : actions
+}
+
+const NO_EDITS = {
+  onAddRow: undefined,
+  onAddColumn: undefined,
+  onRenameColumn: undefined,
+  onPromoteRowToHeader: undefined,
+  onInsertColumn: undefined,
+  onInsertRow: undefined,
+  onDeleteColumn: undefined,
+  onDeleteRow: undefined,
+  onMergeColumns: undefined,
+  onReorderRows: undefined,
+} as const
 
 /**
  * Point every sheet-namespaced store at one sheet, in one place.
@@ -309,6 +329,7 @@ export const App = ({
   onRowHeaderClick,
   attachmentConfig,
   exportEmbedLimit,
+  readOnly = false,
 }: AppProps = {}) => {
   // Consumer theming hook for the whole-app root surface.
   const rootPartClass = usePartClass('root')
@@ -852,6 +873,7 @@ export const App = ({
 
   // Ctrl+H opens Find & replace (unless typing in a field).
   React.useEffect(() => {
+    if (readOnly) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.key === 'h' || e.key === 'H') || !(e.ctrlKey || e.metaKey)) return
       e.preventDefault()
@@ -859,7 +881,7 @@ export const App = ({
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [])
+  }, [readOnly])
   const queryRef = React.useRef<HTMLDivElement>(null)
   const openHelp = React.useCallback(() => {
     // The grid's keyboard layer owns the shortcuts modal and toggles it on '?'.
@@ -1430,6 +1452,16 @@ export const App = ({
     onColumnChangeRef.current?.(columnInfosRef.current)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columnKey])
+
+  const lockedColumns = React.useMemo(
+    () =>
+      table
+        .getAllLeafColumns()
+        .filter((col) => readOnly || col.columnDef.meta?.readOnly)
+        .map((col) => col.id),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [columns, readOnly],
+  )
 
   // Columns Find & replace may target (skip / read-only columns excluded from
   // being replaced into).
@@ -2220,6 +2252,7 @@ export const App = ({
             setFormulas={setFormulas}
             skipColumns={SKIP_COLUMNS}
             readOnlyColumns={readOnlyColumns}
+            lockedColumns={lockedColumns}
             history={history}
             onSelectionChange={onSelectionChange}
             onCellActivate={onCellActivate}
@@ -2279,7 +2312,7 @@ export const App = ({
                 ops={
                   <div ref={setOpsSlot} className="min-w-0 flex-1 empty:hidden" />
                 }
-                actions={[
+                actions={toolbarActions(readOnly, [
                   // Selection formatting / merge / insert / delete-row-or-column
                   // live entirely in the contextual ops rail above; Clear is the
                   // one selection action that stays a plain toolbar button.
@@ -2391,13 +2424,14 @@ export const App = ({
                       </React.Suspense>
                     ) : null,
                   },
-                ]}
+                ])}
               />
               ) : null}
               <div className="min-h-0 flex-1">
                 <CustomTable
                   table={table}
                   opsSlot={opsSlot}
+                  readOnly={readOnly}
                   onAddRow={addRow}
                   onAddColumn={isCustomSchema ? addColumn : undefined}
                   // Not gated on `isCustomSchema`: renaming works against any
@@ -2420,6 +2454,7 @@ export const App = ({
                   fontFamilies={[...FONT_FAMILY_OPTIONS]}
                   onMergeColumns={mergeColumns}
                   onReorderRows={reorderRows}
+                  {...(readOnly ? NO_EDITS : null)}
                 />
               </div>
               {/* Excel-style aggregates of the current selection. */}
@@ -2430,7 +2465,7 @@ export const App = ({
       </div>
 
       <FindReplaceDialog
-        open={findOpen}
+        open={findOpen && !readOnly}
         onClose={() => setFindOpen(false)}
         rows={data}
         columns={findReplaceColumns}
@@ -2441,7 +2476,8 @@ export const App = ({
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         buildSnapshot={buildSnapshot}
-        onImportSnapshot={importSnapshot}
+        onImportSnapshot={readOnly ? undefined : importSnapshot}
+        readOnly={readOnly}
         exportEmbedLimit={exportEmbedLimit}
         currentQuery={globalFilter}
         onLoadQuery={(value) => {

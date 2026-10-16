@@ -1,0 +1,39 @@
+@tailwind components;
+@tailwind utilities;
+
+.jt-list,
+.jt-list *,
+.jt-list *::before,
+.jt-list *::after {
+  box-sizing: border-box;
+}
+
+.jt-list {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: #0f172a;
+}
+
+.jt-list button,
+.jt-list input,
+.jt-list select {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+.jt-list button {
+  cursor: pointer;
+}
+
+.jt-list button:disabled {
+  cursor: default;
+}
+
+.jt-list table {
+  border-collapse: separate;
+}
+
+.jt-list tr:focus-visible {
+  outline: 2px solid #ff3b1d;
+  outline-offset: -2px;
+}

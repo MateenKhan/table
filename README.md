@@ -55,6 +55,115 @@ Give `rows` and `cols` instead of `columns`/`data` to drop the user into an empt
 <SpreadsheetTable rows={4} cols={4} onDataChange={(rows) => console.log(rows)} />
 ```
 
+## Read-only list with server-side paging
+
+For admin lists (orders, customers, payments…) use the lean **`ListTable`** from
+`@jugaaadi/table/list`. It is read-only and ships no formulas, attachments or
+spreadsheet export: about **13 KB minified (5 KB gzip)** plus a **6 KB**
+stylesheet, against ~330 KB for the full spreadsheet. Search, sorting, column
+filters, pagination, column show/hide/resize/pin and CSV export come built in.
+
+```tsx
+import { ListTable, type ColumnDef, type PaginationState, type SortingState } from '@jugaaadi/table/list'
+import '@jugaaadi/table/list.css'
+
+type Order = { id: string; customer: string; total: number; status: 'paid' | 'pending'; createdAt: string }
+
+const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' })
+
+const columns: ColumnDef<Order, any>[] = [
+  { accessorKey: 'customer', header: 'Customer' },
+  {
+    accessorKey: 'status',
+    header: 'Status',
+    cell: ({ getValue }) => (
+      <span className={getValue() === 'paid' ? 'badge-green' : 'badge-amber'}>{getValue()}</span>
+    ),
+  },
+  { accessorKey: 'total', header: 'Total', meta: { align: 'right' }, cell: ({ getValue }) => money.format(getValue()) },
+  { accessorKey: 'createdAt', header: 'Created', cell: ({ getValue }) => new Date(getValue()).toLocaleDateString() },
+  {
+    id: 'actions',
+    header: '',
+    enableSorting: false,
+    cell: ({ row }) => <button onClick={() => refund(row.original.id)}>Refund</button>,
+  },
+]
+
+export function Orders() {
+  const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 25 })
+  const [sorting, setSorting] = React.useState<SortingState>([])
+  const [search, setSearch] = React.useState('')
+  const { data, isLoading } = useOrders({ pagination, sorting, search })
+
+  return (
+    <ListTable
+      manual
+      columns={columns}
+      data={data?.rows ?? []}
+      rowCount={data?.total ?? 0}
+      getRowId={(order) => order.id}
+      pagination={pagination}
+      onPaginationChange={setPagination}
+      sorting={sorting}
+      onSortingChange={setSorting}
+      globalFilter={search}
+      onGlobalFilterChange={setSearch}
+      loading={isLoading}
+      emptyMessage="No orders yet"
+      getRowHref={(order) => `/admin/orders/${order.id}`}
+      onRowClick={(order) => navigate(`/admin/orders/${order.id}`)}
+    />
+  )
+}
+```
+
+- **`manual`** switches off local sorting, filtering and paging (TanStack
+  `manualPagination` / `manualSorting` / `manualFiltering`); `data` is the page
+  the server returned and **`rowCount`** drives the page count. Changing the
+  search, sort or a column filter moves back to the first page.
+- Every piece of state can be **controlled** (`pagination`, `sorting`,
+  `globalFilter`, `columnFilters`) or left to the table; the `on…Change`
+  callbacks receive the next value either way. Search and column filters are
+  debounced (`searchDebounceMs`, default 300).
+- **Cells** are ordinary TanStack `cell` renderers — badges, money, dates,
+  buttons. A click on a button, link, input or anything marked
+  `data-row-click-ignore` inside a cell never triggers `onRowClick`.
+- **`getRowHref`** renders the first cell of each row as a real `<a href>`, so
+  keyboard, middle-click, Ctrl/Cmd-click and "copy link" work; a middle-click
+  anywhere on the row opens the link in a new tab. With `onRowClick` too, a plain
+  click goes to `onRowClick` (use it for client-side routing).
+- **Phones:** only the table scrolls sideways, and the first column stays pinned
+  (`stickyFirstColumn`, default on). The toolbar and pager wrap.
+- `ListTable` is also exported from `@jugaaadi/table`, but importing it from
+  there pulls in ~70 KB of spreadsheet code; use `@jugaaadi/table/list`.
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| `columns`, `data` | `ColumnDef[]`, `TData[]` | Columns and the rows to show (one page in `manual` mode). |
+| `getRowId` | `(row, index) => string` | Stable row ids (rendered as `data-row-id`). |
+| `onRowClick` | `(row, index, event) => void` | Row activation by click, or Enter/Space on a focused row. |
+| `getRowHref` | `(row) => string \| undefined` | Real link per row. |
+| `manual` | `boolean` | Server-side mode. |
+| `rowCount` | `number` | Total rows on the server (`manual` only). |
+| `pagination` / `onPaginationChange` | `{ pageIndex, pageSize }` | Page state. `pageSize` (default 25) and `pageSizeOptions` set the uncontrolled start and the picker. |
+| `sorting` / `onSortingChange` | `SortingState` | Sort state. |
+| `globalFilter` / `onGlobalFilterChange` | `string` | Search box. |
+| `columnFilters` / `onColumnFiltersChange` | `ColumnFiltersState` | Per-column filters (toolbar filter button). |
+| `loading`, `emptyMessage` | `boolean`, `ReactNode` | Loading and empty states. |
+| `exportFileName` | `string \| false` | CSV export of the visible columns (the current page in `manual` mode); `false` hides it. |
+| `toolbar`, `className`, `caption` | | Extra toolbar content (e.g. a "New order" button), root classes, an accessible caption. |
+
+Column `meta.align` (`'left' | 'center' | 'right'`) aligns a column.
+
+### Read-only spreadsheet
+
+`<SpreadsheetTable readOnly … />` keeps the full spreadsheet for viewing —
+search, find, sort, filter, group, column show/hide/resize/pin, export — and
+removes editing: typing, paste, fill, clear, formulas, formatting, add / rename
+/ delete columns and rows, import, find & replace. A single column can be locked
+with `meta: { readOnly: true }`.
+
 ## Props & events
 
 | Prop | Type | Description |
@@ -62,6 +171,8 @@ Give `rows` and `cols` instead of `columns`/`data` to drop the user into an empt
 | `columns` | `ColumnDef[]` | Column definitions. Omit for a blank sheet. |
 | `data` | `Row[]` | Initial rows (`Row = Record<string, unknown>`). |
 | `rows`, `cols` | `number` | Blank-sheet size when no `columns`/`data` are given. |
+| `readOnly` | `boolean` | View-only sheet: no editing, formulas, formatting, structure changes or import. Per column: `meta.readOnly`. |
+| `pageSize` | `number` | Rows per page (defaults to every row passed). |
 | `onDataChange` | `(rows) => void` | Fires after any change with **all** current rows — the way to read edits back out. Not fired on initial mount. |
 | `onCellChange` | `(rowIndex, columnId, value) => void` | Fires **per cell** whose value changes (typing, fill, paste, clear, undo/redo). |
 | `onColumnChange` | `(columns: ColumnInfo[]) => void` | Fires when columns change (add/remove/rename/retype/reorder/hide). |
@@ -384,6 +495,9 @@ Other scripts:
 ```bash
 npm run build      # production build to dist/
 npm run serve      # preview the production build
+npm run build:lib  # the npm library (dist/table.js, dist/list.js, style.css, list.css)
+npm test           # vitest component tests
+npm run typecheck
 ```
 
 ### Configuration

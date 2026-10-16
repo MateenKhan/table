@@ -39,6 +39,7 @@ export type SpreadsheetTableProps = {
   // embedded sheet renders no pagination controls — TanStack's own default of
   // 10 silently hid everything past row 10 with no way to reach it.
   pageSize?: number
+  readOnly?: boolean
   // Called after any edit (typing, fill, paste, clear, delete or row reorder)
   // with the full, current rows — the way to read the user's changes back out.
   // Not called for the initial `data`.
@@ -120,6 +121,7 @@ export function SpreadsheetTable({
   rows,
   cols,
   pageSize,
+  readOnly,
   onDataChange,
   onCellChange,
   onColumnChange,
@@ -176,6 +178,7 @@ export function SpreadsheetTable({
               rows={rows}
               cols={cols}
               pageSize={pageSize}
+              readOnly={readOnly}
               standalone={false}
               onDataChange={onDataChange as never}
               onCellChange={onCellChange}
@@ -197,6 +200,13 @@ export function SpreadsheetTable({
 }
 
 export default SpreadsheetTable
+export { ListTable } from './list'
+export type {
+  ListTableProps,
+  ColumnFiltersState,
+  PaginationState,
+  SortingState,
+} from './list'
 export type { ColumnDef }
 export type { SelectionScope, CellEventInfo, ColumnInfo }
 export type { TableClassNames, TablePart }

@@ -75,6 +75,7 @@ export function AttachmentCell<T extends RowData>({
   }, [value?.url])
 
   const isActive = selection?.activeKey === `${row.id}::${column.id}`
+  const locked = selection?.isLockedColumn(column.id) ?? false
   // Whether this cell has something the lightbox can show (image, video or
   // audio). Computed up front so the keyboard-preview effect below can read it
   // through a ref regardless of which branch renders.
@@ -174,7 +175,7 @@ export function AttachmentCell<T extends RowData>({
 
   // Paste is a window-level event, so only the active cell may claim it.
   React.useEffect(() => {
-    if (!isActive) return
+    if (!isActive || locked) return
 
     const onPaste = (event: ClipboardEvent) => {
       const file = event.clipboardData?.files?.[0]
@@ -185,7 +186,7 @@ export function AttachmentCell<T extends RowData>({
 
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  }, [isActive, row.index, column.id])
+  }, [isActive, locked, row.index, column.id])
 
   /* ------------------------------------------------------------ empty cell */
 
@@ -193,7 +194,7 @@ export function AttachmentCell<T extends RowData>({
     // Aggregate rows have no backing data row, so there is nothing to upload
     // into - render a placeholder rather than an affordance that would write
     // to the wrong index.
-    if (row.getIsGrouped()) return null
+    if (row.getIsGrouped() || locked) return null
 
     return (
       <FileDropzone
@@ -357,6 +358,25 @@ export function AttachmentCell<T extends RowData>({
     </a>
   )
 
+  const lightbox =
+    isPreviewOpen && previewKind ? (
+      <AttachmentLightbox
+        src={value.url}
+        name={value.name}
+        kind={previewKind}
+        onClose={closePreview}
+      />
+    ) : null
+
+  if (locked) {
+    return (
+      <div className="flex items-center gap-1 min-w-0">
+        {thumbnail}
+        {lightbox}
+      </div>
+    )
+  }
+
   return (
     <FileDropzone
       accept={accept}
@@ -376,14 +396,7 @@ export function AttachmentCell<T extends RowData>({
         <>
           {thumbnail}
           {renderActions(open)}
-          {isPreviewOpen && previewKind ? (
-            <AttachmentLightbox
-              src={value.url}
-              name={value.name}
-              kind={previewKind}
-              onClose={closePreview}
-            />
-          ) : null}
+          {lightbox}
         </>
       )}
     </FileDropzone>
