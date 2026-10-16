@@ -39,7 +39,11 @@ server-side paging" for a full example. In short:
 />
 ```
 
-- `list.css` has **no global reset**. `style.css` (the spreadsheet's) ships
+- A list-only app installs nothing but `@jugaaadi/table` (its one dependency is
+  `@tanstack/react-table`). The spreadsheet's libraries are optional peers —
+  install them only if you use `SpreadsheetTable`.
+- `list.css` has **no global reset** and every class is `jtl-` prefixed; theme
+  it with the `--jtl-*` variables and `theme` / `data-theme="dark"` / `.jtl-dark`. `style.css` (the spreadsheet's) ships
   Tailwind's preflight and sets `html, body { overflow: hidden }` for the
   full-screen sheet, so a page that only shows lists should import `list.css`
   only.

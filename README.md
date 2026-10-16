@@ -22,6 +22,10 @@ it. Attribution is preserved in [`LICENSE`](./LICENSE).
 ## Install & use
 
 ```bash
+# the full spreadsheet (SpreadsheetTable) — its libraries are optional peers
+npm i @jugaaadi/table @tanstack/match-sorter-utils date-fns framer-motion lucide-react lz-string react-colorful react-day-picker react-dropzone
+
+# lists only (ListTable from @jugaaadi/table/list) — nothing else to install
 npm i @jugaaadi/table
 ```
 
@@ -59,8 +63,7 @@ Give `rows` and `cols` instead of `columns`/`data` to drop the user into an empt
 
 For admin lists (orders, customers, payments…) use the lean **`ListTable`** from
 `@jugaaadi/table/list`. It is read-only and ships no formulas, attachments or
-spreadsheet export: about **13 KB minified (5 KB gzip)** plus a **6 KB**
-stylesheet, against ~330 KB for the full spreadsheet. Search, sorting, column
+spreadsheet export, and its only dependency is `@tanstack/react-table`. Search, sorting, column
 filters, pagination, column show/hide/resize/pin and CSV export come built in.
 
 ```tsx
@@ -135,8 +138,27 @@ export function Orders() {
   click goes to `onRowClick` (use it for client-side routing).
 - **Phones:** only the table scrolls sideways, and the first column stays pinned
   (`stickyFirstColumn`, default on). The toolbar and pager wrap.
+- **Expandable rows:** pass `renderExpanded(row)` and a toggle column appears
+  (or set `showExpandColumn={false}` and call `row.toggleExpanded()` from your
+  own cell). `expanded` / `onExpandedChange` control it; `getRowCanExpand`
+  limits which rows expand.
+- **Per-row attributes:** `getRowProps(row)` returns `className`, `style`,
+  `data-testid` and any `data-*`; `data-row-id` is always the row id.
+- **Long text** is cut with an ellipsis and the full text in a tooltip; set
+  `meta: { wrap: true }` on a column to wrap it instead.
+- **Labels** are all replaceable for translation: `searchLabel`,
+  `searchPlaceholder`, `emptyMessage` and `labels` (pager buttons, "Rows",
+  the "1–25 of 300" text, filter and expand labels — see `DEFAULT_LABELS`).
+  `hideToolbar` and `hidePagination` (`true`, or `'auto'` to hide the pager
+  when everything fits on one page) remove the chrome.
+- **Theming:** every class is prefixed `jtl-` and `list.css` sets no global
+  styles. Colours are CSS variables on `.jtl-root` (`--jtl-bg`, `--jtl-fg`,
+  `--jtl-border`, `--jtl-bg-hover`, `--jtl-focus`, `--jtl-radius`, `--jtl-font`
+  …). Dark mode follows `prefers-color-scheme`; force it with `theme="dark"` /
+  `theme="light"`, or a `data-theme="dark"` / `.jtl-dark` ancestor.
+- **Touch:** buttons, inputs and the pager get a 44px hit area on touch screens.
 - `ListTable` is also exported from `@jugaaadi/table`, but importing it from
-  there pulls in ~70 KB of spreadsheet code; use `@jugaaadi/table/list`.
+  there pulls in spreadsheet code; use `@jugaaadi/table/list`.
 
 | Prop | Type | Description |
 | --- | --- | --- |
@@ -144,6 +166,8 @@ export function Orders() {
 | `getRowId` | `(row, index) => string` | Stable row ids (rendered as `data-row-id`). |
 | `onRowClick` | `(row, index, event) => void` | Row activation by click, or Enter/Space on a focused row. |
 | `getRowHref` | `(row) => string \| undefined` | Real link per row. |
+| `getRowProps` | `(row, index) => RowProps` | Extra row attributes (`className`, `style`, `data-*`). |
+| `renderExpanded` / `expanded` / `onExpandedChange` | `(row, index) => ReactNode`, `ExpandedState` | Detail rows; `getRowCanExpand`, `showExpandColumn`. |
 | `manual` | `boolean` | Server-side mode. |
 | `rowCount` | `number` | Total rows on the server (`manual` only). |
 | `pagination` / `onPaginationChange` | `{ pageIndex, pageSize }` | Page state. `pageSize` (default 25) and `pageSizeOptions` set the uncontrolled start and the picker. |
@@ -152,9 +176,12 @@ export function Orders() {
 | `columnFilters` / `onColumnFiltersChange` | `ColumnFiltersState` | Per-column filters (toolbar filter button). |
 | `loading`, `emptyMessage` | `boolean`, `ReactNode` | Loading and empty states. |
 | `exportFileName` | `string \| false` | CSV export of the visible columns (the current page in `manual` mode); `false` hides it. |
+| `searchLabel`, `searchPlaceholder`, `labels` | `string`, `Partial<ListLabels>` | Text for translation. |
+| `hideToolbar`, `hidePagination` | `boolean`, `boolean \| 'auto'` | Hide the toolbar / pager. |
+| `theme` | `'light' \| 'dark'` | Force a theme (default: follow the system). |
 | `toolbar`, `className`, `caption` | | Extra toolbar content (e.g. a "New order" button), root classes, an accessible caption. |
 
-Column `meta.align` (`'left' | 'center' | 'right'`) aligns a column.
+Column `meta.align` (`'left' | 'center' | 'right'`) aligns a column; `meta.wrap` wraps it.
 
 ### Read-only spreadsheet
 

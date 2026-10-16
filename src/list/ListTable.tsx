@@ -6,11 +6,16 @@ import {
   getSortedRowModel,
   useReactTable,
   type ColumnFiltersState,
+  type ExpandedState,
   type PaginationState,
   type SortingState,
   type Updater,
 } from '@tanstack/react-table'
+import { cx } from './classNames'
+import { EXPAND_COLUMN_ID, expandColumn } from './expandColumn'
 import { firstLeafId } from './firstLeafId'
+import { DEFAULT_LABELS } from './labels'
+import { LabelsContext } from './labelsContext'
 import { ListBody } from './ListBody'
 import { ListHead } from './ListHead'
 import { ListPager } from './ListPager'
@@ -25,6 +30,8 @@ const PAGINATED_MODEL = getPaginationRowModel()
 const DEFAULT_PAGE_SIZES = [10, 25, 50, 100]
 const NO_SORTING: SortingState = []
 const NO_FILTERS: ColumnFiltersState = []
+const NO_EXPANDED: ExpandedState = {}
+const CAN_EXPAND = () => true
 const DEFAULT_COLUMN = { filterFn: 'includesString' as const, minSize: 48 }
 
 export function ListTable<TData>({
@@ -33,6 +40,12 @@ export function ListTable<TData>({
   getRowId,
   onRowClick,
   getRowHref,
+  getRowProps,
+  renderExpanded,
+  getRowCanExpand,
+  expanded: expandedProp,
+  onExpandedChange,
+  showExpandColumn = true,
   manual = false,
   rowCount,
   pagination: paginationProp,
@@ -46,15 +59,29 @@ export function ListTable<TData>({
   columnFilters: columnFiltersProp,
   onColumnFiltersChange,
   searchDebounceMs = 300,
-  searchPlaceholder = 'Search…',
+  searchPlaceholder,
+  searchLabel,
+  labels: labelsProp,
+  hideToolbar = false,
+  hidePagination = false,
+  theme,
   loading = false,
   emptyMessage,
   stickyFirstColumn = true,
   exportFileName = 'export',
   toolbar,
-  className = '',
+  className,
   caption,
 }: ListTableProps<TData>) {
+  const labels = React.useMemo(
+    () => ({
+      ...DEFAULT_LABELS,
+      ...labelsProp,
+      ...(searchLabel ? { search: searchLabel } : null),
+      ...(searchPlaceholder ? { searchPlaceholder } : null),
+    }),
+    [labelsProp, searchLabel, searchPlaceholder],
+  )
   const [pagination, setPagination] = useControllable<PaginationState>(
     paginationProp,
     onPaginationChange,
@@ -67,6 +94,7 @@ export function ListTable<TData>({
     onColumnFiltersChange,
     NO_FILTERS,
   )
+  const [expanded, setExpanded] = useControllable(expandedProp, onExpandedChange, NO_EXPANDED)
   const [showFilters, setShowFilters] = React.useState(() => !!columnFiltersProp?.length)
 
   const firstPage = React.useCallback(
@@ -95,18 +123,33 @@ export function ListTable<TData>({
     [setGlobalFilter, firstPage],
   )
 
+  const withExpander = !!renderExpanded && showExpandColumn
+  const allColumns = React.useMemo(
+    () => (withExpander ? [expandColumn<TData>(), ...columns] : columns),
+    [withExpander, columns],
+  )
+
   const [initialState] = React.useState(() => {
-    const pinned = stickyFirstColumn ? firstLeafId(columns) : undefined
-    return { columnPinning: { left: pinned ? [pinned] : [] } }
+    const first = stickyFirstColumn ? firstLeafId(columns) : undefined
+    const left = [withExpander && EXPAND_COLUMN_ID, first].filter(Boolean) as string[]
+    return { columnPinning: { left } }
   })
+
+  const canExpand = React.useCallback(
+    (row: { original: TData }) => (getRowCanExpand ?? CAN_EXPAND)(row.original),
+    [getRowCanExpand],
+  )
 
   const table = useReactTable({
     data,
-    columns,
+    columns: allColumns,
     getRowId,
+    getRowCanExpand: renderExpanded ? canExpand : undefined,
     defaultColumn: DEFAULT_COLUMN,
     initialState,
-    state: { pagination, sorting, globalFilter, columnFilters },
+    state: { pagination, sorting, globalFilter, columnFilters, expanded },
+    onExpandedChange: setExpanded,
+    autoResetExpanded: false,
     onPaginationChange: setPagination,
     onSortingChange: changeSorting,
     onGlobalFilterChange: search,
@@ -124,39 +167,44 @@ export function ListTable<TData>({
     getPaginationRowModel: manual ? undefined : PAGINATED_MODEL,
   })
 
+  const pagerHidden =
+    hidePagination === true ||
+    (hidePagination === 'auto' && table.getPageCount() <= 1 && pagination.pageIndex === 0)
+
   return (
-    <div data-jt="list" className={`jt-list flex min-w-0 max-w-full flex-col ${className}`}>
-      <ListToolbar
-        table={table}
-        search={globalFilter}
-        onSearch={search}
-        searchDelay={searchDebounceMs}
-        placeholder={searchPlaceholder}
-        showFilters={showFilters}
-        onToggleFilters={() => setShowFilters((open) => !open)}
-        exportFileName={exportFileName}
-      >
-        {toolbar}
-      </ListToolbar>
-      <div className="min-h-0 max-w-full flex-1 overflow-auto overscroll-x-contain rounded-lg border border-slate-200 bg-white">
-        <table
-          aria-busy={loading || undefined}
-          style={{ width: table.getTotalSize() }}
-          className="min-w-full table-fixed border-separate border-spacing-0"
-        >
-          {caption ? <caption className="sr-only">{caption}</caption> : null}
-          <ListHead table={table} showFilters={showFilters} filterDelay={searchDebounceMs} />
-          <ListBody
+    <LabelsContext.Provider value={labels}>
+      <div data-jt="list" data-theme={theme} className={cx('jtl-root', className)}>
+        {hideToolbar ? null : (
+          <ListToolbar
             table={table}
-            loading={loading}
-            emptyMessage={emptyMessage}
-            onRowClick={onRowClick}
-            getRowHref={getRowHref}
-          />
-        </table>
+            search={globalFilter}
+            onSearch={search}
+            searchDelay={searchDebounceMs}
+            showFilters={showFilters}
+            onToggleFilters={() => setShowFilters((open) => !open)}
+            exportFileName={exportFileName}
+          >
+            {toolbar}
+          </ListToolbar>
+        )}
+        <div className="jtl-scroll">
+          <table aria-busy={loading || undefined} style={{ width: table.getTotalSize() }} className="jtl-table">
+            {caption ? <caption className="jtl-sr-only">{caption}</caption> : null}
+            <ListHead table={table} showFilters={showFilters && !hideToolbar} filterDelay={searchDebounceMs} />
+            <ListBody
+              table={table}
+              loading={loading}
+              emptyMessage={emptyMessage}
+              onRowClick={onRowClick}
+              getRowHref={getRowHref}
+              getRowProps={getRowProps}
+              renderExpanded={renderExpanded}
+            />
+          </table>
+        </div>
+        {pagerHidden ? null : <ListPager table={table} pageSizeOptions={pageSizeOptions} loading={loading} />}
       </div>
-      <ListPager table={table} pageSizeOptions={pageSizeOptions} loading={loading} />
-    </div>
+    </LabelsContext.Provider>
   )
 }
 

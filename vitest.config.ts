@@ -8,5 +8,6 @@ export default defineConfig({
     include: ['src/**/*.test.tsx', 'src/columnDrag.test.ts'],
     setupFiles: ['src/test/setup.ts'],
     restoreMocks: true,
+    css: { include: [/list\.css/] },
   },
 })

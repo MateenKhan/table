@@ -1,9 +1,9 @@
 import React from 'react'
 import type { Table } from '@tanstack/react-table'
-import { Download, ListFilter, Search } from 'lucide-react'
+import { Icon } from './icons'
 import { ColumnsMenu } from './ColumnsMenu'
 import { downloadCsv, toCsv } from './csv'
-import { TOOL_BUTTON } from './toolClasses'
+import { useLabels } from './labelsContext'
 import { useDebouncedCommit } from './useDebouncedCommit'
 
 type Props<TData> = {
@@ -11,7 +11,6 @@ type Props<TData> = {
   search: string
   onSearch: (value: string) => void
   searchDelay: number
-  placeholder: string
   showFilters: boolean
   onToggleFilters: () => void
   exportFileName: string | false
@@ -23,46 +22,53 @@ export function ListToolbar<TData>({
   search,
   onSearch,
   searchDelay,
-  placeholder,
   showFilters,
   onToggleFilters,
   exportFileName,
   children,
 }: Props<TData>) {
+  const labels = useLabels()
   const [text, setText] = React.useState(search)
   React.useEffect(() => setText(search), [search])
   useDebouncedCommit(text, search, searchDelay, onSearch)
   const canFilter = table.getAllLeafColumns().some((column) => column.getCanFilter())
 
   return (
-    <div className="flex flex-wrap items-center gap-2 py-2">
-      <label className="relative flex min-w-0 flex-1 basis-48 items-center">
-        <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2 text-slate-400" />
+    <div className="jtl-toolbar">
+      <label className="jtl-search">
+        <Icon name="search" className="jtl-search-icon" />
         <input
           type="search"
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder={placeholder}
-          aria-label="Search"
-          className="h-8 w-full min-w-0 rounded border border-slate-200 bg-white pl-7 pr-2 text-sm text-slate-800 outline-none focus:border-slate-400"
+          placeholder={labels.searchPlaceholder}
+          aria-label={labels.search}
+          className="jtl-input jtl-input--search"
         />
       </label>
-      <div className="flex items-center gap-1">
+      <div className="jtl-tools">
         {canFilter ? (
-          <button type="button" className={TOOL_BUTTON} aria-pressed={showFilters} aria-label="Column filters" title="Column filters" onClick={onToggleFilters}>
-            <ListFilter size={14} aria-hidden="true" />
+          <button
+            type="button"
+            className="jtl-btn"
+            aria-pressed={showFilters}
+            aria-label={labels.columnFilters}
+            title={labels.columnFilters}
+            onClick={onToggleFilters}
+          >
+            <Icon name="filter" />
           </button>
         ) : null}
         <ColumnsMenu table={table} />
         {exportFileName === false ? null : (
           <button
             type="button"
-            className={TOOL_BUTTON}
-            aria-label="Export CSV"
-            title="Export CSV"
+            className="jtl-btn"
+            aria-label={labels.exportCsv}
+            title={labels.exportCsv}
             onClick={() => downloadCsv(toCsv(table), exportFileName)}
           >
-            <Download size={14} aria-hidden="true" />
+            <Icon name="download" />
           </button>
         )}
         {children}

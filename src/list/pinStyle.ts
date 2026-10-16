@@ -9,14 +9,13 @@ export function pinStyle<TData>(column: Column<TData, unknown>): React.CSSProper
     : { position: 'sticky', right: column.getAfter('right'), zIndex: 1 }
 }
 
-export function pinEdgeClass<TData>(column: Column<TData, unknown>): string {
-  if (column.getIsLastColumn('left')) return 'shadow-[inset_-1px_0_0_#e2e8f0]'
-  if (column.getIsFirstColumn('right')) return 'shadow-[inset_1px_0_0_#e2e8f0]'
-  return ''
+export function pinEdgeClass<TData>(column: Column<TData, unknown>): string | undefined {
+  if (column.getIsLastColumn('left')) return 'jtl-pin-edge--left'
+  if (column.getIsFirstColumn('right')) return 'jtl-pin-edge--right'
+  return undefined
 }
 
-const ALIGN_CLASS = { left: 'text-left', center: 'text-center', right: 'text-right' } as const
-
-export function alignClass<TData>(column: Column<TData, unknown>): string {
-  return ALIGN_CLASS[column.columnDef.meta?.align ?? 'left']
+export function alignClass<TData>(column: Column<TData, unknown>): string | undefined {
+  const align = column.columnDef.meta?.align
+  return align && align !== 'left' ? `jtl-align--${align}` : undefined
 }

@@ -6,6 +6,7 @@
 // Styles: importing this module also pulls in the compiled Tailwind stylesheet,
 // shipped as `dist/style.css`. Consumers import it once (see the README).
 import './index.css'
+import './list/list.css'
 
 import React from 'react'
 import { MotionConfig } from 'framer-motion'

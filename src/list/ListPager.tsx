@@ -1,5 +1,6 @@
 import type { Table } from '@tanstack/react-table'
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { Icon } from './icons'
+import { useLabels } from './labelsContext'
 
 type Props<TData> = {
   table: Table<TData>
@@ -7,12 +8,10 @@ type Props<TData> = {
   loading: boolean
 }
 
-const BUTTON =
-  'inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 bg-white text-slate-600 disabled:opacity-40 sm:hover:bg-slate-50'
-
 const formatCount = (value: number) => value.toLocaleString()
 
 export function ListPager<TData>({ table, pageSizeOptions, loading }: Props<TData>) {
+  const labels = useLabels()
   const { pageIndex, pageSize } = table.getState().pagination
   const total = table.getRowCount()
   const pageCount = Math.max(1, table.getPageCount())
@@ -21,19 +20,21 @@ export function ListPager<TData>({ table, pageSizeOptions, loading }: Props<TDat
   const sizes = pageSizeOptions.includes(pageSize)
     ? pageSizeOptions
     : [...pageSizeOptions, pageSize].sort((a, b) => a - b)
+  const canBack = table.getCanPreviousPage()
+  const canForward = table.getCanNextPage()
 
   return (
-    <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-2 px-1 py-2 text-xs text-slate-600">
+    <nav aria-label={labels.pagination} className="jtl-pager">
       <span role="status" aria-live="polite">
-        {loading ? 'Loading…' : `${formatCount(from)}–${formatCount(to)} of ${formatCount(total)}`}
+        {loading ? labels.loading : labels.range(formatCount(from), formatCount(to), formatCount(total))}
       </span>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1">
-          <span>Rows</span>
+      <div className="jtl-pager-group">
+        <label className="jtl-pager-size">
+          <span>{labels.rowsPerPage}</span>
           <select
             value={pageSize}
             onChange={(event) => table.setPageSize(Number(event.target.value))}
-            className="h-8 rounded border border-slate-200 bg-white px-1 text-xs"
+            className="jtl-select"
           >
             {sizes.map((size) => (
               <option key={size} value={size}>
@@ -42,21 +43,19 @@ export function ListPager<TData>({ table, pageSizeOptions, loading }: Props<TDat
             ))}
           </select>
         </label>
-        <span aria-label="Page">
-          {formatCount(pageIndex + 1)} / {formatCount(pageCount)}
-        </span>
-        <div className="flex items-center gap-1">
-          <button type="button" className={BUTTON} aria-label="First page" disabled={!table.getCanPreviousPage()} onClick={() => table.firstPage()}>
-            <ChevronsLeft size={14} aria-hidden="true" />
+        <span>{labels.page(formatCount(pageIndex + 1), formatCount(pageCount))}</span>
+        <div className="jtl-tools">
+          <button type="button" className="jtl-btn" aria-label={labels.firstPage} disabled={!canBack} onClick={() => table.firstPage()}>
+            <Icon name="chevronsLeft" />
           </button>
-          <button type="button" className={BUTTON} aria-label="Previous page" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>
-            <ChevronLeft size={14} aria-hidden="true" />
+          <button type="button" className="jtl-btn" aria-label={labels.previousPage} disabled={!canBack} onClick={() => table.previousPage()}>
+            <Icon name="chevronLeft" />
           </button>
-          <button type="button" className={BUTTON} aria-label="Next page" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>
-            <ChevronRight size={14} aria-hidden="true" />
+          <button type="button" className="jtl-btn" aria-label={labels.nextPage} disabled={!canForward} onClick={() => table.nextPage()}>
+            <Icon name="chevronRight" />
           </button>
-          <button type="button" className={BUTTON} aria-label="Last page" disabled={!table.getCanNextPage()} onClick={() => table.lastPage()}>
-            <ChevronsRight size={14} aria-hidden="true" />
+          <button type="button" className="jtl-btn" aria-label={labels.lastPage} disabled={!canForward} onClick={() => table.lastPage()}>
+            <Icon name="chevronsRight" />
           </button>
         </div>
       </div>
