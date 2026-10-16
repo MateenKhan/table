@@ -60,8 +60,9 @@ and edits to `App.tsx`, `EditableCell.tsx`, `SheetTabs.tsx`, `formula.ts`,
 
 ### Verifying
 
-There is **no `test` script** and no test runner installed. Tests are
-dependency-free files run directly:
+`npm test` runs vitest (jsdom + testing-library) over `src/**/*.test.tsx` and
+`src/columnDrag.test.ts`. The older tests are dependency-free files run
+directly:
 
 ```bash
 npx tsx src/formula.test.ts          # 561 passed
@@ -72,9 +73,8 @@ npx tsc --noEmit                     # must be exit 0
 npm run build                        # vite build, ~45s cold
 ```
 
-`src/columnDrag.test.ts` and `src/columnOrder.test.ts` **cannot run** — they
-`import from 'vitest'`, which is not a dependency. Pre-existing; do not treat
-their failure as a regression you caused.
+`src/columnOrder.test.ts` is a dependency-free script despite its name; run it
+with `npx tsx`.
 
 ---
 

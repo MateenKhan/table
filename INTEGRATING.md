@@ -16,6 +16,43 @@ export & share, and column drag/reorder.
 
 ---
 
+## Lists (read-only, server-side paging)
+
+For lists of records use `ListTable` from `@jugaaadi/table/list` with
+`@jugaaadi/table/list.css` — see the README section "Read-only list with
+server-side paging" for a full example. In short:
+
+```tsx
+<ListTable
+  manual
+  columns={columns}
+  data={page.rows}
+  rowCount={page.total}
+  pagination={pagination}
+  onPaginationChange={setPagination}
+  sorting={sorting}
+  onSortingChange={setSorting}
+  globalFilter={search}
+  onGlobalFilterChange={setSearch}
+  loading={loading}
+  getRowHref={(row) => `/items/${row.id}`}
+/>
+```
+
+- A list-only app installs nothing but `@jugaaadi/table` (its one dependency is
+  `@tanstack/react-table`). The spreadsheet's libraries are optional peers —
+  install them only if you use `SpreadsheetTable`.
+- `list.css` has **no global reset** and every class is `jtl-` prefixed; theme
+  it with the `--jtl-*` variables and `theme` / `data-theme="dark"` / `.jtl-dark`. `style.css` (the spreadsheet's) ships
+  Tailwind's preflight and sets `html, body { overflow: hidden }` for the
+  full-screen sheet, so a page that only shows lists should import `list.css`
+  only.
+- Send the server `pagination`, `sorting`, `globalFilter` and `columnFilters`
+  exactly as the callbacks hand them over; the table already resets to page 0
+  when the query changes.
+
+---
+
 ## Styling & theming
 
 The table is **Tailwind-native**. Its look is driven entirely by utility classes
@@ -82,6 +119,7 @@ The table persists to **`localStorage`**:
 
 ## Verify after changes
 
-- `npx tsc --noEmit` — clean.
-- `npm run build` (`vite build`) — clean.
+- `npm run typecheck` — clean.
+- `npm test` — vitest component tests (list + read-only spreadsheet).
+- `npm run build:lib` — the library; `npm run build` — the demo app.
 - The table renders styled: accent selection, hairline grid, light theme.

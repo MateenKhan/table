@@ -307,6 +307,7 @@ type Props<T extends RowData> = {
   // row at `fromDataIndex` to sit before `toDataIndex` (== row count → append).
   // Absent → the gutter stays a plain click-to-select with no drag.
   onReorderRows?: (fromDataIndex: number, toDataIndex: number) => void
+  readOnly?: boolean
 }
 
 export function CustomTable<T extends RowData>({
@@ -326,6 +327,7 @@ export function CustomTable<T extends RowData>({
   fontFamilies,
   onMergeColumns,
   onReorderRows,
+  readOnly = false,
 }: Props<T>) {
   const selection = useCellSelection()
   // Re-render whenever any scope's colour / alignment changes.
@@ -1298,6 +1300,7 @@ export function CustomTable<T extends RowData>({
             : 'Selection'
 
     contextProps = {
+      viewOnly: readOnly,
       scopeKeys: stripScopeKeys,
       scope,
       title: stripTitle,

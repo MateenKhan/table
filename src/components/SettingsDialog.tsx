@@ -65,8 +65,9 @@ export type SettingsDialogProps = {
   onClose: () => void
   /** Build the current view (data + formatting + layout) for export/share. */
   buildSnapshot: () => AppSnapshot
-  /** Load an imported snapshot back into the app. */
-  onImportSnapshot: (s: AppSnapshot) => void
+  /** Load an imported snapshot back into the app. Absent → no import. */
+  onImportSnapshot?: (s: AppSnapshot) => void
+  readOnly?: boolean
   /** Max bytes per attachment inline-embedded on export (undefined = no cap). */
   exportEmbedLimit?: number
   /** The query currently in the builder — subject of "save current query". */
@@ -805,7 +806,7 @@ function ExportShareTab({
   onClose,
 }: {
   buildSnapshot: () => AppSnapshot
-  onImportSnapshot: (s: AppSnapshot) => void
+  onImportSnapshot?: (s: AppSnapshot) => void
   exportEmbedLimit?: number
   onClose: () => void
 }) {
@@ -914,7 +915,7 @@ function ExportShareTab({
         )
         return
       }
-      onImportSnapshot(snapshot)
+      onImportSnapshot?.(snapshot)
       toast.success('View imported', `${snapshot.data.length} row(s) loaded`)
       onClose()
     } catch (err) {
@@ -1003,6 +1004,7 @@ function ExportShareTab({
         </div>
       </section>
 
+      {onImportSnapshot ? (
       <section className="flex flex-col gap-3">
         <div className="eyebrow">Import a view</div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1043,6 +1045,7 @@ function ExportShareTab({
           above <code>exportEmbedLimit</code> are kept as references).
         </p>
       </section>
+      ) : null}
     </div>
   )
 }
@@ -1125,19 +1128,27 @@ export function SettingsDialog({
   onLoadQuery,
   onResetAllSheets,
   sheetCount = 0,
+  readOnly = false,
 }: SettingsDialogProps) {
-  const [tab, setTab] = React.useState<TabId>('profiles')
+  const firstTab: TabId = readOnly ? 'queries' : 'profiles'
+  const [tab, setTab] = React.useState<TabId>(firstTab)
 
   // Land on the first tab each time the dialog opens.
   React.useEffect(() => {
-    if (open) setTab('profiles')
-  }, [open])
+    if (open) setTab(firstTab)
+  }, [open, firstTab])
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
-    { id: 'profiles', label: 'Format profiles', icon: <Paintbrush size={14} /> },
     { id: 'queries', label: 'Saved queries', icon: <SlidersHorizontal size={14} /> },
     { id: 'export', label: 'Export & share', icon: <Share2 size={14} /> },
   ]
+  if (!readOnly) {
+    tabs.unshift({
+      id: 'profiles',
+      label: 'Format profiles',
+      icon: <Paintbrush size={14} />,
+    })
+  }
   // Last, and only where sheets exist. Ordering is not cosmetic: the destructive
   // tab sits furthest from the one the dialog opens on.
   if (onResetAllSheets) {
@@ -1186,7 +1197,7 @@ export function SettingsDialog({
         </div>
 
         <div>
-          {tab === 'profiles' && <FormatProfilesTab />}
+          {tab === 'profiles' && !readOnly && <FormatProfilesTab />}
           {tab === 'queries' && (
             <SavedQueriesTab
               currentQuery={currentQuery as GlobalSearchValue}

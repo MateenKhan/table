@@ -120,6 +120,7 @@ export type CellSelectionApi = {
   // the end and leaves the value un-selected, rather than selecting all of it.
   takeEditCaret: () => boolean
   isReadOnlyColumn: (columnId: string) => boolean
+  isLockedColumn: (columnId: string) => boolean
   // Registers the scrollable grid container as the keyboard focus sink, and
   // moves DOM focus onto it. `focusGrid` is what a cell/header/gutter click
   // calls so arrow-key navigation runs off the grid (and the query input, which
@@ -228,6 +229,7 @@ type Props<T extends RowData> = {
   skipColumns?: string[]
   // Columns that can be selected but never written (e.g. derived `fullName`).
   readOnlyColumns?: string[]
+  lockedColumns?: string[]
   // Undo / redo stacks. Every write the grid makes is recorded through this.
   history?: HistoryApi
   // Fired when the selection changes, with the same coordinate-free scope the
@@ -249,12 +251,15 @@ type Props<T extends RowData> = {
   children: React.ReactNode
 }
 
+const NO_COLUMNS: string[] = []
+
 export function CellSelectionProvider<T extends RowData>({
   table,
   formulas,
   setFormulas,
   skipColumns = [],
   readOnlyColumns = [],
+  lockedColumns = NO_COLUMNS,
   history,
   onSelectionChange,
   onCellActivate,
@@ -310,9 +315,10 @@ export function CellSelectionProvider<T extends RowData>({
   const scrollRef = React.useRef<HTMLElement | null>(null)
 
   const skip = React.useMemo(() => new Set(skipColumns), [skipColumns])
+  const locked = React.useMemo(() => new Set(lockedColumns), [lockedColumns])
   const readOnly = React.useMemo(
-    () => new Set([...skipColumns, ...readOnlyColumns]),
-    [skipColumns, readOnlyColumns],
+    () => new Set([...skipColumns, ...readOnlyColumns, ...lockedColumns]),
+    [skipColumns, readOnlyColumns, lockedColumns],
   )
 
   const rect: CellRect | null =
@@ -563,7 +569,8 @@ export function CellSelectionProvider<T extends RowData>({
               | undefined
           )?.type
           const isAttachmentCol = metaType === 'image' || metaType === 'file'
-          if (readOnly.has(columnId) && !isAttachmentCol) continue
+          if (readOnly.has(columnId) && (!isAttachmentCol || locked.has(columnId)))
+            continue
           seen.add(dedup)
           cells.push(cellPatch(dataIndex, columnId, ''))
           formulaPatches.push(formulaPatch(dataIndex, columnId, undefined))
@@ -2366,6 +2373,7 @@ export function CellSelectionProvider<T extends RowData>({
     takeInitialInput,
     takeEditCaret,
     isReadOnlyColumn: (columnId: string) => readOnly.has(columnId),
+    isLockedColumn: (columnId: string) => locked.has(columnId),
     registerScrollContainer,
     focusGrid,
     previewNonce,

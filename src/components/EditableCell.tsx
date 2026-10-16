@@ -130,6 +130,7 @@ export function EditableCell<T extends RowData>({
   const columnId = column.id
   const isEditing = selection?.editingKey === `${row.id}::${columnId}`
   const readOnlyColumn = selection?.isReadOnlyColumn(columnId) ?? false
+  const locked = selection?.isLockedColumn(columnId) ?? false
   // The column's declared type drives formatting, alignment and what the
   // editor will accept.
   const typeOptions = column.columnDef.meta
@@ -701,14 +702,14 @@ export function EditableCell<T extends RowData>({
 
     const storeFile = (files: File[]) => {
       const file = files[0]
-      if (!file || !tableMeta) return
+      if (!file || !tableMeta || locked) return
       // Revoke the outgoing object URL before overwriting, mirroring
       // AttachmentCell's ownership handling.
       releaseAttachment(value)
       tableMeta.updateData(dataIndex, columnId, createAttachment(file))
     }
     const removeValue = () => {
-      if (!tableMeta) return
+      if (!tableMeta || locked) return
       releaseAttachment(value)
       tableMeta.updateData(dataIndex, columnId, '')
     }
@@ -770,18 +771,20 @@ export function EditableCell<T extends RowData>({
                   <span className="truncate text-xs">{value.name}</span>
                 </a>
               )}
-              <button
-                type="button"
-                aria-label="Remove attachment"
-                title="Remove"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  removeValue()
-                }}
-                className="flex-none rounded-lg border border-slate-300 bg-white px-1 py-0.5 text-2xs leading-none text-rose-600 transition-colors sm:hover:bg-rose-50"
-              >
-                ×
-              </button>
+              {locked ? null : (
+                <button
+                  type="button"
+                  aria-label="Remove attachment"
+                  title="Remove"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    removeValue()
+                  }}
+                  className="flex-none rounded-lg border border-slate-300 bg-white px-1 py-0.5 text-2xs leading-none text-rose-600 transition-colors sm:hover:bg-rose-50"
+                >
+                  ×
+                </button>
+              )}
             </>
           )}
         </FileDropzone>
