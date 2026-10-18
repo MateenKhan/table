@@ -134,7 +134,17 @@ const ROW_HEIGHT_PRESETS: { label: string; name: string; value: number }[] = [
 // this prop bag exactly ONCE and hands the same object to both. That is what
 // makes "the strip and the menu can never disagree" true by construction rather
 // than by discipline: same props in, same descriptors out.
+const ignoreTextStyle = () => {}
+
+const VIEW_ACTION_IDS = new Set([
+  'column-hide',
+  'column-arrange',
+  'column-hidden',
+  'row-pin',
+])
+
 export type ContextActionProps<T extends RowData> = {
+  viewOnly?: boolean
   // Every `tableFormatting` scope key the current selection maps to. Colour /
   // alignment / border writes fan out across ALL of them (one for a whole
   // column / row, one-per-cell for a free range). The first key is also read
@@ -781,6 +791,7 @@ export function useContextActions<T extends RowData>(
     // (an eyebrow chip on the strip, a header on the menu), so the model never
     // reads it.
     scope: scopeProp,
+    viewOnly,
     onEnterFormula,
     table,
     column,
@@ -1512,7 +1523,10 @@ export function useContextActions<T extends RowData>(
   // rather than incidental: within one group the rendered order is exactly the
   // source order above.
   const ordered = actions
-    .filter((action) => action.applies(facts))
+    .filter(
+      (action) =>
+        (!viewOnly || VIEW_ACTION_IDS.has(action.id)) && action.applies(facts),
+    )
     .map((action, index) => ({ action, index }))
     .sort((a, b) => {
       const weight = (entry: { action: StripAction }) =>
@@ -1522,7 +1536,12 @@ export function useContextActions<T extends RowData>(
     })
     .map((entry) => entry.action)
 
-  return { scope, facts, actions: ordered, toggleTextStyle }
+  return {
+    scope,
+    facts,
+    actions: ordered,
+    toggleTextStyle: viewOnly ? ignoreTextStyle : toggleTextStyle,
+  }
 }
 
 // Chunk an ordered action list into contiguous same-group runs. In the

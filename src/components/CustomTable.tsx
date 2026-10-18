@@ -31,6 +31,7 @@ import { useFindHighlight, findKey } from '../tableFind'
 import CellContextStrip from './CellContextPopup'
 import type { ContextActionProps } from './CellContextPopup'
 import CellContextMenu from './CellContextMenu'
+import { useHorizontalWheel } from '../list/useHorizontalWheel'
 import { Lock, Plus } from 'lucide-react'
 
 // Applied borders are rendered in TWO layers, because a `border-collapse` grid
@@ -307,6 +308,7 @@ type Props<T extends RowData> = {
   // row at `fromDataIndex` to sit before `toDataIndex` (== row count → append).
   // Absent → the gutter stays a plain click-to-select with no drag.
   onReorderRows?: (fromDataIndex: number, toDataIndex: number) => void
+  readOnly?: boolean
 }
 
 export function CustomTable<T extends RowData>({
@@ -326,6 +328,7 @@ export function CustomTable<T extends RowData>({
   fontFamilies,
   onMergeColumns,
   onReorderRows,
+  readOnly = false,
 }: Props<T>) {
   const selection = useCellSelection()
   // Re-render whenever any scope's colour / alignment changes.
@@ -548,6 +551,7 @@ export function CustomTable<T extends RowData>({
   // live that is not an <input>. Registering it (once — `register` is stable)
   // lets the selection layer focus it on a cell/header/gutter click.
   const scrollContainerRef = React.useRef<HTMLDivElement>(null)
+  useHorizontalWheel(scrollContainerRef)
   const register = selection?.registerScrollContainer
   React.useEffect(() => {
     if (!register) return
@@ -1298,6 +1302,7 @@ export function CustomTable<T extends RowData>({
             : 'Selection'
 
     contextProps = {
+      viewOnly: readOnly,
       scopeKeys: stripScopeKeys,
       scope,
       title: stripTitle,
@@ -1518,7 +1523,8 @@ export function CustomTable<T extends RowData>({
           maxWidth: '100%',
           outline: 'none',
           WebkitOverflowScrolling: 'touch',
-          overscrollBehavior: 'contain',
+          overscrollBehaviorX: 'auto',
+          overscrollBehaviorY: 'contain',
         }}
       >
       <table

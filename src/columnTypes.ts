@@ -59,6 +59,7 @@ export type TypeOptions = {
   // `mixed`: which kinds of content the column will accept. The logic layer
   // only stringifies mixed values; the UI decides how to render each kind.
   acceptedTypes?: ColumnType[]
+  readOnly?: boolean
 }
 
 // The default date-fns format string for a date-ish type.

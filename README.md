@@ -22,6 +22,10 @@ it. Attribution is preserved in [`LICENSE`](./LICENSE).
 ## Install & use
 
 ```bash
+# the full spreadsheet (SpreadsheetTable) — its libraries are optional peers
+npm i @jugaaadi/table @tanstack/match-sorter-utils date-fns framer-motion lucide-react lz-string react-colorful react-day-picker react-dropzone
+
+# lists only (ListTable from @jugaaadi/table/list) — nothing else to install
 npm i @jugaaadi/table
 ```
 
@@ -55,6 +59,161 @@ Give `rows` and `cols` instead of `columns`/`data` to drop the user into an empt
 <SpreadsheetTable rows={4} cols={4} onDataChange={(rows) => console.log(rows)} />
 ```
 
+## Read-only list with server-side paging
+
+For admin lists (orders, customers, payments…) use the lean **`ListTable`** from
+`@jugaaadi/table/list`. It is read-only and ships no formulas, attachments or
+spreadsheet export, and its only dependency is `@tanstack/react-table`. Search, sorting, column
+filters, pagination, column show/hide/resize/pin and CSV export come built in.
+
+```tsx
+import { ListTable, type ColumnDef, type PaginationState, type SortingState } from '@jugaaadi/table/list'
+import '@jugaaadi/table/list.css'
+
+type Order = { id: string; customer: string; total: number; status: 'paid' | 'pending'; createdAt: string }
+
+const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' })
+
+const columns: ColumnDef<Order, any>[] = [
+  { accessorKey: 'customer', header: 'Customer' },
+  {
+    accessorKey: 'status',
+    header: 'Status',
+    cell: ({ getValue }) => (
+      <span className={getValue() === 'paid' ? 'badge-green' : 'badge-amber'}>{getValue()}</span>
+    ),
+  },
+  { accessorKey: 'total', header: 'Total', meta: { align: 'right' }, cell: ({ getValue }) => money.format(getValue()) },
+  { accessorKey: 'createdAt', header: 'Created', cell: ({ getValue }) => new Date(getValue()).toLocaleDateString() },
+  {
+    id: 'actions',
+    header: '',
+    enableSorting: false,
+    cell: ({ row }) => <button onClick={() => refund(row.original.id)}>Refund</button>,
+  },
+]
+
+export function Orders() {
+  const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 25 })
+  const [sorting, setSorting] = React.useState<SortingState>([])
+  const [search, setSearch] = React.useState('')
+  const { data, isLoading } = useOrders({ pagination, sorting, search })
+
+  return (
+    <ListTable
+      manual
+      columns={columns}
+      data={data?.rows ?? []}
+      rowCount={data?.total ?? 0}
+      getRowId={(order) => order.id}
+      pagination={pagination}
+      onPaginationChange={setPagination}
+      sorting={sorting}
+      onSortingChange={setSorting}
+      globalFilter={search}
+      onGlobalFilterChange={setSearch}
+      loading={isLoading}
+      emptyMessage="No orders yet"
+      getRowHref={(order) => `/admin/orders/${order.id}`}
+      onRowClick={(order) => navigate(`/admin/orders/${order.id}`)}
+    />
+  )
+}
+```
+
+- **`manual`** switches off local sorting, filtering and paging (TanStack
+  `manualPagination` / `manualSorting` / `manualFiltering`); `data` is the page
+  the server returned and **`rowCount`** drives the page count. Changing the
+  search, sort or a column filter moves back to the first page.
+- Every piece of state can be **controlled** (`pagination`, `sorting`,
+  `globalFilter`, `columnFilters`) or left to the table; the `on…Change`
+  callbacks receive the next value either way. Search and column filters are
+  debounced (`searchDebounceMs`, default 300).
+- **Cells** are ordinary TanStack `cell` renderers — badges, money, dates,
+  buttons. A click on a button, link, input or anything marked
+  `data-row-click-ignore` inside a cell never triggers `onRowClick`.
+- **`getRowHref`** renders the first cell of each row as a real `<a href>`, so
+  keyboard, middle-click, Ctrl/Cmd-click and "copy link" work; a middle-click
+  anywhere on the row opens the link in a new tab. With `onRowClick` too, a plain
+  click goes to `onRowClick` (use it for client-side routing).
+- **Phones:** only the table scrolls sideways, and the first column stays pinned
+  (`stickyFirstColumn`, default on). The toolbar and pager wrap.
+- **Expandable rows:** pass `renderExpanded(row)` and a toggle column appears
+  (or set `showExpandColumn={false}` and call `row.toggleExpanded()` from your
+  own cell). `expanded` / `onExpandedChange` control it; `getRowCanExpand`
+  limits which rows expand.
+- **Per-row attributes:** `getRowProps(row)` returns `className`, `style`,
+  `data-testid` and any `data-*`; `data-row-id` is always the row id.
+- **Long text** is cut with an ellipsis and the full text in a tooltip; set
+  `meta: { wrap: true }` on a column to wrap it instead.
+- **Labels** are all replaceable for translation: `searchLabel`,
+  `searchPlaceholder`, `emptyMessage` and `labels` (pager buttons, "Rows",
+  the "1–25 of 300" text, filter and expand labels — see `DEFAULT_LABELS`).
+  `hideToolbar` and `hidePagination` (`true`, or `'auto'` to hide the pager
+  when everything fits on one page) remove the chrome.
+- **Theming:** every class is prefixed `jtl-` and `list.css` sets no global
+  styles. Colours are CSS variables on `.jtl-root` (`--jtl-bg`, `--jtl-fg`,
+  `--jtl-border`, `--jtl-bg-hover`, `--jtl-focus`, `--jtl-radius`, `--jtl-font`
+  …). Dark mode follows `prefers-color-scheme`; force it with `theme="dark"` /
+  `theme="light"`, or a `data-theme="dark"` / `.jtl-dark` ancestor.
+- **Touch:** buttons, inputs and the pager get a 44px hit area on touch screens.
+- **Horizontal scrolling:** Shift + mouse wheel scrolls the table sideways
+  (trackpads scroll sideways natively). At either edge the wheel passes to the
+  page. The horizontal scrollbar is always drawn. SpreadsheetTable does the same.
+- **Column formats:** the columns menu gives each column a Format choice by
+  type: dates (`dd-MMM-yyyy` by default, e.g. 18-Oct-2026; `dd-MMM-yyyy HH:mm`,
+  `dd/MM/yyyy`, `yyyy-MM-dd`, relative), numbers (decimals, grouping, Indian
+  lakh grouping, percent), currency (standard, Indian grouping, no decimals)
+  and text (truncate / wrap). Date and text columns are detected from the data;
+  number columns show raw values until a format is picked or set. Set
+  defaults per column with `meta.format`, for example
+  `{ kind: 'currency', currency: 'INR', minorUnits: true }` (`minorUnits`: the
+  value is in paise/cents), and set the table-wide date default with
+  `dateFormat`. The user's choices come back through `columnFormats` /
+  `onColumnFormatsChange` (and `columnVisibility` / `onColumnVisibilityChange`)
+  for apps that save them, or pass `storageKey` to keep both in the browser.
+  Sorting, search and filters use the raw values. CSV export is raw unless you
+  set `exportFormatted`. Custom `cell` renderers draw their own output; they
+  can use the exported `formatValue(value, format)`.
+- `ListTable` is also exported from `@jugaaadi/table`, but importing it from
+  there pulls in spreadsheet code; use `@jugaaadi/table/list`.
+
+| Prop | Type | Description |
+| --- | --- | --- |
+| `columns`, `data` | `ColumnDef[]`, `TData[]` | Columns and the rows to show (one page in `manual` mode). |
+| `getRowId` | `(row, index) => string` | Stable row ids (rendered as `data-row-id`). |
+| `onRowClick` | `(row, index, event) => void` | Row activation by click, or Enter/Space on a focused row. |
+| `getRowHref` | `(row) => string \| undefined` | Real link per row. |
+| `getRowProps` | `(row, index) => RowProps` | Extra row attributes (`className`, `style`, `data-*`). |
+| `renderExpanded` / `expanded` / `onExpandedChange` | `(row, index) => ReactNode`, `ExpandedState` | Detail rows; `getRowCanExpand`, `showExpandColumn`. |
+| `manual` | `boolean` | Server-side mode. |
+| `rowCount` | `number` | Total rows on the server (`manual` only). |
+| `pagination` / `onPaginationChange` | `{ pageIndex, pageSize }` | Page state. `pageSize` (default 25) and `pageSizeOptions` set the uncontrolled start and the picker. |
+| `sorting` / `onSortingChange` | `SortingState` | Sort state. |
+| `globalFilter` / `onGlobalFilterChange` | `string` | Search box. |
+| `columnFilters` / `onColumnFiltersChange` | `ColumnFiltersState` | Per-column filters (toolbar filter button). |
+| `loading`, `emptyMessage` | `boolean`, `ReactNode` | Loading and empty states. |
+| `exportFileName` | `string \| false` | CSV export of the visible columns (the current page in `manual` mode); `false` hides it. |
+| `searchLabel`, `searchPlaceholder`, `labels` | `string`, `Partial<ListLabels>` | Text for translation. |
+| `hideToolbar`, `hidePagination` | `boolean`, `boolean \| 'auto'` | Hide the toolbar / pager. |
+| `theme` | `'light' \| 'dark'` | Force a theme (default: follow the system). |
+| `columnFormats` / `onColumnFormatsChange` | `ColumnFormats` | Per-column formats chosen by the user. |
+| `dateFormat`, `locale` | `DatePattern`, `string` | Table-wide date default (`dd-MMM-yyyy`) and `Intl` locale. |
+| `columnVisibility` / `onColumnVisibilityChange` | `VisibilityState` | Shown / hidden columns. |
+| `storageKey` | `string` | Keep visibility and formats in `localStorage` under this key. |
+| `exportFormatted` | `boolean` | Export the formatted text instead of raw values. |
+| `toolbar`, `className`, `caption` | | Extra toolbar content (e.g. a "New order" button), root classes, an accessible caption. |
+
+Column `meta.align` (`'left' | 'center' | 'right'`) aligns a column; `meta.wrap` wraps it.
+
+### Read-only spreadsheet
+
+`<SpreadsheetTable readOnly … />` keeps the full spreadsheet for viewing —
+search, find, sort, filter, group, column show/hide/resize/pin, export — and
+removes editing: typing, paste, fill, clear, formulas, formatting, add / rename
+/ delete columns and rows, import, find & replace. A single column can be locked
+with `meta: { readOnly: true }`.
+
 ## Props & events
 
 | Prop | Type | Description |
@@ -62,6 +221,10 @@ Give `rows` and `cols` instead of `columns`/`data` to drop the user into an empt
 | `columns` | `ColumnDef[]` | Column definitions. Omit for a blank sheet. |
 | `data` | `Row[]` | Initial rows (`Row = Record<string, unknown>`). |
 | `rows`, `cols` | `number` | Blank-sheet size when no `columns`/`data` are given. |
+| `readOnly` | `boolean` | View-only sheet: no editing, formulas, formatting, structure changes or import. Per column: `meta.readOnly`. |
+| `dateFormat` | `string` | date-fns pattern for date columns that set no `meta.dateFormat` (e.g. `'dd-MMM-yyyy'`). |
+| `columnFormats` / `onColumnFormatsChange` | `Record<columnId, TypeOptions \| presetId>` | Controlled per-column formats (`decimals`, `currency`, `locale: 'en-IN'` for lakh grouping, `useGrouping`, `dateFormat`, …). The user's choices from the number-format picker are reported here. |
+| `pageSize` | `number` | Rows per page (defaults to every row passed). |
 | `onDataChange` | `(rows) => void` | Fires after any change with **all** current rows — the way to read edits back out. Not fired on initial mount. |
 | `onCellChange` | `(rowIndex, columnId, value) => void` | Fires **per cell** whose value changes (typing, fill, paste, clear, undo/redo). |
 | `onColumnChange` | `(columns: ColumnInfo[]) => void` | Fires when columns change (add/remove/rename/retype/reorder/hide). |
@@ -384,6 +547,9 @@ Other scripts:
 ```bash
 npm run build      # production build to dist/
 npm run serve      # preview the production build
+npm run build:lib  # the npm library (dist/table.js, dist/list.js, style.css, list.css)
+npm test           # vitest component tests
+npm run typecheck
 ```
 
 ### Configuration
