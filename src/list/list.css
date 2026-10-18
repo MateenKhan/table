@@ -183,7 +183,7 @@
   position: absolute;
   right: 0;
   z-index: 10;
-  width: 14rem;
+  width: 16rem;
   max-height: 18rem;
   margin-top: 0.25rem;
   overflow-y: auto;
@@ -196,11 +196,18 @@
 
 .jtl-menu-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
   padding: 0.25rem 0.5rem;
   border-radius: calc(var(--jtl-radius) / 2);
   color: var(--jtl-fg);
+}
+
+.jtl-select--format {
+  flex: 1 0 100%;
+  height: 1.75rem;
+  font-size: 12px;
 }
 
 .jtl-menu-label {
@@ -222,10 +229,25 @@
   min-height: 0;
   max-width: 100%;
   overflow: auto;
-  overscroll-behavior-x: contain;
   border: 1px solid var(--jtl-border);
   border-radius: var(--jtl-radius);
   background: var(--jtl-bg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--jtl-border-strong) transparent;
+}
+
+.jtl-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.jtl-scroll::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: var(--jtl-border-strong);
+}
+
+.jtl-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .jtl-table {

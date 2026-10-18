@@ -14,6 +14,7 @@ type Props<TData> = {
   showFilters: boolean
   onToggleFilters: () => void
   exportFileName: string | false
+  exportFormatted: boolean
   children?: React.ReactNode
 }
 
@@ -25,6 +26,7 @@ export function ListToolbar<TData>({
   showFilters,
   onToggleFilters,
   exportFileName,
+  exportFormatted,
   children,
 }: Props<TData>) {
   const labels = useLabels()
@@ -66,7 +68,7 @@ export function ListToolbar<TData>({
             className="jtl-btn"
             aria-label={labels.exportCsv}
             title={labels.exportCsv}
-            onClick={() => downloadCsv(toCsv(table), exportFileName)}
+            onClick={() => downloadCsv(toCsv(table, exportFormatted), exportFileName)}
           >
             <Icon name="download" />
           </button>

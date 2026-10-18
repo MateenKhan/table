@@ -2,10 +2,12 @@ import React from 'react'
 import { flexRender, type Cell, type Row, type Table } from '@tanstack/react-table'
 import { cx } from './classNames'
 import { EXPAND_COLUMN_ID } from './expandColumn'
+import { formattedCell } from './formattedCell'
 import { useLabels } from './labelsContext'
 import { alignClass, pinEdgeClass, pinStyle } from './pinStyle'
 import { hasTextSelection, isOwnInteraction, ROW_LINK_ATTR, wantsNewTab } from './rowClick'
 import type { ListTableProps } from './types'
+import { viewOf } from './viewOf'
 
 type RowOptions<TData> = Pick<ListTableProps<TData>, 'onRowClick' | 'getRowHref' | 'getRowProps' | 'renderExpanded'>
 
@@ -20,12 +22,15 @@ const openInNewTab = (href: string) => window.open(href, '_blank', 'noopener')
 const isRowLink = (target: EventTarget | null) => !!(target as Element | null)?.closest?.(`[${ROW_LINK_ATTR}]`)
 
 function CellContent<TData>({ cell }: { cell: Cell<TData, unknown> }) {
-  const wrap = !!cell.column.columnDef.meta?.wrap
+  const { column } = cell
+  const view = viewOf(cell.getContext().table)
+  const wrap = view ? view.wraps(column.id) : !!column.columnDef.meta?.wrap
   const value = cell.getValue()
+  const shown = column.columnDef.cell === formattedCell ? (view?.display(column.id, value) ?? value) : value
   return (
     <span
       className={cx('jtl-cell', wrap && 'jtl-cell--wrap')}
-      title={!wrap && typeof value === 'string' ? value : undefined}
+      title={!wrap && (typeof shown === 'string' || column.columnDef.cell === formattedCell) && shown != null ? String(shown) : undefined}
     >
       {flexRender(cell.column.columnDef.cell, cell.getContext())}
     </span>

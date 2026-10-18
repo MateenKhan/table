@@ -10,10 +10,16 @@ import {
   type PaginationState,
   type SortingState,
   type Updater,
+  type VisibilityState,
 } from '@tanstack/react-table'
 import { cx } from './classNames'
 import { EXPAND_COLUMN_ID, expandColumn } from './expandColumn'
 import { firstLeafId } from './firstLeafId'
+import type { ColumnFormats, FormatOptions } from './format'
+import { withFormattedCells } from './formattedCell'
+import { useListView } from './listView'
+import { useHorizontalWheel } from './useHorizontalWheel'
+import { readView, useStoredView } from './viewStorage'
 import { DEFAULT_LABELS } from './labels'
 import { LabelsContext } from './labelsContext'
 import { ListBody } from './ListBody'
@@ -32,6 +38,8 @@ const NO_SORTING: SortingState = []
 const NO_FILTERS: ColumnFiltersState = []
 const NO_EXPANDED: ExpandedState = {}
 const CAN_EXPAND = () => true
+const NO_FORMATS: ColumnFormats = {}
+const NO_VISIBILITY: VisibilityState = {}
 const DEFAULT_COLUMN = { filterFn: 'includesString' as const, minSize: 48 }
 
 export function ListTable<TData>({
@@ -68,6 +76,14 @@ export function ListTable<TData>({
   loading = false,
   emptyMessage,
   stickyFirstColumn = true,
+  columnFormats: columnFormatsProp,
+  onColumnFormatsChange,
+  dateFormat = 'dd-MMM-yyyy',
+  locale,
+  columnVisibility: columnVisibilityProp,
+  onColumnVisibilityChange,
+  storageKey,
+  exportFormatted = false,
   exportFileName = 'export',
   toolbar,
   className,
@@ -94,6 +110,22 @@ export function ListTable<TData>({
     onColumnFiltersChange,
     NO_FILTERS,
   )
+  const [stored] = React.useState(() => readView(storageKey))
+  const [columnFormats, setColumnFormats] = useControllable<ColumnFormats>(
+    columnFormatsProp,
+    onColumnFormatsChange,
+    stored.formats ?? NO_FORMATS,
+  )
+  const [columnVisibility, setColumnVisibility] = useControllable<VisibilityState>(
+    columnVisibilityProp,
+    onColumnVisibilityChange,
+    stored.visibility ?? NO_VISIBILITY,
+  )
+  useStoredView(storageKey, { visibility: columnVisibility, formats: columnFormats })
+  const formatOptions = React.useMemo<FormatOptions>(() => ({ locale, dateFormat }), [locale, dateFormat])
+  const metaRef = React.useRef<{ listView?: ReturnType<typeof useListView<TData>> }>({})
+  const scrollRef = React.useRef<HTMLDivElement>(null)
+  useHorizontalWheel(scrollRef)
   const [expanded, setExpanded] = useControllable(expandedProp, onExpandedChange, NO_EXPANDED)
   const [showFilters, setShowFilters] = React.useState(() => !!columnFiltersProp?.length)
 
@@ -125,7 +157,10 @@ export function ListTable<TData>({
 
   const withExpander = !!renderExpanded && showExpandColumn
   const allColumns = React.useMemo(
-    () => (withExpander ? [expandColumn<TData>(), ...columns] : columns),
+    () => {
+      const formatted = withFormattedCells(columns)
+      return withExpander ? [expandColumn<TData>(), ...formatted] : formatted
+    },
     [withExpander, columns],
   )
 
@@ -147,7 +182,9 @@ export function ListTable<TData>({
     getRowCanExpand: renderExpanded ? canExpand : undefined,
     defaultColumn: DEFAULT_COLUMN,
     initialState,
-    state: { pagination, sorting, globalFilter, columnFilters, expanded },
+    meta: metaRef.current,
+    state: { pagination, sorting, globalFilter, columnFilters, expanded, columnVisibility },
+    onColumnVisibilityChange: setColumnVisibility,
     onExpandedChange: setExpanded,
     autoResetExpanded: false,
     onPaginationChange: setPagination,
@@ -167,6 +204,8 @@ export function ListTable<TData>({
     getPaginationRowModel: manual ? undefined : PAGINATED_MODEL,
   })
 
+  metaRef.current.listView = useListView(table, data, allColumns, columnFormats, setColumnFormats, formatOptions)
+
   const pagerHidden =
     hidePagination === true ||
     (hidePagination === 'auto' && table.getPageCount() <= 1 && pagination.pageIndex === 0)
@@ -183,11 +222,12 @@ export function ListTable<TData>({
             showFilters={showFilters}
             onToggleFilters={() => setShowFilters((open) => !open)}
             exportFileName={exportFileName}
+            exportFormatted={exportFormatted}
           >
             {toolbar}
           </ListToolbar>
         )}
-        <div className="jtl-scroll">
+        <div ref={scrollRef} className="jtl-scroll">
           <table aria-busy={loading || undefined} style={{ width: table.getTotalSize() }} className="jtl-table">
             {caption ? <caption className="jtl-sr-only">{caption}</caption> : null}
             <ListHead table={table} showFilters={showFilters && !hideToolbar} filterDelay={searchDebounceMs} />

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0 — 2026-10-18
+
+### Added
+- Shift + mouse wheel scrolls `ListTable` and `SpreadsheetTable` sideways
+  inside the table. At either edge the wheel goes to the page. The list's
+  horizontal scrollbar is always drawn. `useHorizontalWheel` is exported.
+- `ListTable` column formats: a Format choice per column in the columns menu
+  (date patterns with `dd-MMM-yyyy` as the default and relative; number
+  decimals, grouping, Indian lakh grouping and percent; currency with
+  `minorUnits`; text truncate or wrap). Also `meta.format`, `dateFormat`,
+  `locale`, `columnFormats` / `onColumnFormatsChange`, `columnVisibility` /
+  `onColumnVisibilityChange`, `storageKey` (keeps both in `localStorage`),
+  `exportFormatted`, and the `formatValue` helper. Sorting, search and filters
+  use raw values. Formatting is done with `Intl` only, so no new dependency.
+- `SpreadsheetTable`: `dateFormat` (default for date columns),
+  `columnFormats` / `onColumnFormatsChange` (controlled per-column formats,
+  reporting the user's number-format choices).
+
+### Changed
+- Date columns in `ListTable` now show `dd-MMM-yyyy` unless told otherwise.
+- The spreadsheet grid lets horizontal overscroll reach the page.
+
 ## 0.2.0 — 2026-10-16
 
 ### Added

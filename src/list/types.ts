@@ -5,10 +5,13 @@ import type {
   ExpandedState,
   PaginationState,
   RowData,
+  VisibilityState,
   SortingState,
 } from '@tanstack/react-table'
 import type { ListLabels } from './labels'
+import type { ColumnFormat, ColumnFormats, DatePattern, FormatKind, FormatOptions } from './format'
 
+export type { ColumnFormat, ColumnFormats, DatePattern }
 export type { ColumnFiltersState, ExpandedState, ListLabels, PaginationState, SortingState }
 
 export type RowProps = {
@@ -19,6 +22,17 @@ export type RowProps = {
 }
 
 export type ListTheme = 'light' | 'dark'
+
+export type ListView = {
+  options: FormatOptions
+  kindOf: (columnId: string) => FormatKind | undefined
+  baseFormatOf: (columnId: string) => ColumnFormat | undefined
+  userFormatOf: (columnId: string) => ColumnFormat | undefined
+  formatOf: (columnId: string) => ColumnFormat | undefined
+  setFormat: (columnId: string, format: ColumnFormat | undefined) => void
+  display: (columnId: string, value: unknown) => string | undefined
+  wraps: (columnId: string) => boolean
+}
 
 export type ListTableProps<TData> = {
   columns: ColumnDef<TData, any>[]
@@ -54,6 +68,14 @@ export type ListTableProps<TData> = {
   loading?: boolean
   emptyMessage?: React.ReactNode
   stickyFirstColumn?: boolean
+  columnFormats?: ColumnFormats
+  onColumnFormatsChange?: (formats: ColumnFormats) => void
+  dateFormat?: DatePattern
+  locale?: string
+  columnVisibility?: VisibilityState
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void
+  storageKey?: string
+  exportFormatted?: boolean
   exportFileName?: string | false
   toolbar?: React.ReactNode
   className?: string
@@ -64,6 +86,7 @@ declare module '@tanstack/react-table' {
   interface ColumnMeta<TData extends RowData, TValue> {
     align?: 'left' | 'center' | 'right'
     wrap?: boolean
+    format?: ColumnFormat
     readOnly?: boolean
   }
 }

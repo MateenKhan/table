@@ -157,6 +157,24 @@ export function Orders() {
   …). Dark mode follows `prefers-color-scheme`; force it with `theme="dark"` /
   `theme="light"`, or a `data-theme="dark"` / `.jtl-dark` ancestor.
 - **Touch:** buttons, inputs and the pager get a 44px hit area on touch screens.
+- **Horizontal scrolling:** Shift + mouse wheel scrolls the table sideways
+  (trackpads scroll sideways natively). At either edge the wheel passes to the
+  page. The horizontal scrollbar is always drawn. SpreadsheetTable does the same.
+- **Column formats:** the columns menu gives each column a Format choice by
+  type: dates (`dd-MMM-yyyy` by default, e.g. 18-Oct-2026; `dd-MMM-yyyy HH:mm`,
+  `dd/MM/yyyy`, `yyyy-MM-dd`, relative), numbers (decimals, grouping, Indian
+  lakh grouping, percent), currency (standard, Indian grouping, no decimals)
+  and text (truncate / wrap). Date and text columns are detected from the data;
+  number columns show raw values until a format is picked or set. Set
+  defaults per column with `meta.format`, for example
+  `{ kind: 'currency', currency: 'INR', minorUnits: true }` (`minorUnits`: the
+  value is in paise/cents), and set the table-wide date default with
+  `dateFormat`. The user's choices come back through `columnFormats` /
+  `onColumnFormatsChange` (and `columnVisibility` / `onColumnVisibilityChange`)
+  for apps that save them, or pass `storageKey` to keep both in the browser.
+  Sorting, search and filters use the raw values. CSV export is raw unless you
+  set `exportFormatted`. Custom `cell` renderers draw their own output; they
+  can use the exported `formatValue(value, format)`.
 - `ListTable` is also exported from `@jugaaadi/table`, but importing it from
   there pulls in spreadsheet code; use `@jugaaadi/table/list`.
 
@@ -179,6 +197,11 @@ export function Orders() {
 | `searchLabel`, `searchPlaceholder`, `labels` | `string`, `Partial<ListLabels>` | Text for translation. |
 | `hideToolbar`, `hidePagination` | `boolean`, `boolean \| 'auto'` | Hide the toolbar / pager. |
 | `theme` | `'light' \| 'dark'` | Force a theme (default: follow the system). |
+| `columnFormats` / `onColumnFormatsChange` | `ColumnFormats` | Per-column formats chosen by the user. |
+| `dateFormat`, `locale` | `DatePattern`, `string` | Table-wide date default (`dd-MMM-yyyy`) and `Intl` locale. |
+| `columnVisibility` / `onColumnVisibilityChange` | `VisibilityState` | Shown / hidden columns. |
+| `storageKey` | `string` | Keep visibility and formats in `localStorage` under this key. |
+| `exportFormatted` | `boolean` | Export the formatted text instead of raw values. |
 | `toolbar`, `className`, `caption` | | Extra toolbar content (e.g. a "New order" button), root classes, an accessible caption. |
 
 Column `meta.align` (`'left' | 'center' | 'right'`) aligns a column; `meta.wrap` wraps it.
@@ -199,6 +222,8 @@ with `meta: { readOnly: true }`.
 | `data` | `Row[]` | Initial rows (`Row = Record<string, unknown>`). |
 | `rows`, `cols` | `number` | Blank-sheet size when no `columns`/`data` are given. |
 | `readOnly` | `boolean` | View-only sheet: no editing, formulas, formatting, structure changes or import. Per column: `meta.readOnly`. |
+| `dateFormat` | `string` | date-fns pattern for date columns that set no `meta.dateFormat` (e.g. `'dd-MMM-yyyy'`). |
+| `columnFormats` / `onColumnFormatsChange` | `Record<columnId, TypeOptions \| presetId>` | Controlled per-column formats (`decimals`, `currency`, `locale: 'en-IN'` for lakh grouping, `useGrouping`, `dateFormat`, …). The user's choices from the number-format picker are reported here. |
 | `pageSize` | `number` | Rows per page (defaults to every row passed). |
 | `onDataChange` | `(rows) => void` | Fires after any change with **all** current rows — the way to read edits back out. Not fired on initial mount. |
 | `onCellChange` | `(rowIndex, columnId, value) => void` | Fires **per cell** whose value changes (typing, fill, paste, clear, undo/redo). |

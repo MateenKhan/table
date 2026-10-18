@@ -15,6 +15,11 @@ export type ListLabels = {
   expandRow: string
   collapseRow: string
   filterPlaceholder: string
+  formatDefault: string
+  relative: string
+  truncate: string
+  wrap: string
+  format: (column: string) => string
   filter: (column: string) => string
   pin: (column: string) => string
   unpin: (column: string) => string
@@ -39,6 +44,11 @@ export const DEFAULT_LABELS: ListLabels = {
   expandRow: 'Expand row',
   collapseRow: 'Collapse row',
   filterPlaceholder: 'Filter…',
+  formatDefault: 'Default',
+  relative: 'Relative',
+  truncate: 'Truncate',
+  wrap: 'Wrap',
+  format: (column) => `Format ${column}`,
   filter: (column) => `Filter ${column}`,
   pin: (column) => `Pin ${column}`,
   unpin: (column) => `Unpin ${column}`,

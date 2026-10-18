@@ -31,6 +31,7 @@ import { useFindHighlight, findKey } from '../tableFind'
 import CellContextStrip from './CellContextPopup'
 import type { ContextActionProps } from './CellContextPopup'
 import CellContextMenu from './CellContextMenu'
+import { useHorizontalWheel } from '../list/useHorizontalWheel'
 import { Lock, Plus } from 'lucide-react'
 
 // Applied borders are rendered in TWO layers, because a `border-collapse` grid
@@ -550,6 +551,7 @@ export function CustomTable<T extends RowData>({
   // live that is not an <input>. Registering it (once — `register` is stable)
   // lets the selection layer focus it on a cell/header/gutter click.
   const scrollContainerRef = React.useRef<HTMLDivElement>(null)
+  useHorizontalWheel(scrollContainerRef)
   const register = selection?.registerScrollContainer
   React.useEffect(() => {
     if (!register) return
@@ -1521,7 +1523,8 @@ export function CustomTable<T extends RowData>({
           maxWidth: '100%',
           outline: 'none',
           WebkitOverflowScrolling: 'touch',
-          overscrollBehavior: 'contain',
+          overscrollBehaviorX: 'auto',
+          overscrollBehaviorY: 'contain',
         }}
       >
       <table

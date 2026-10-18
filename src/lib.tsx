@@ -13,6 +13,8 @@ import { MotionConfig } from 'framer-motion'
 import type { ColumnDef } from '@tanstack/react-table'
 import { ToastProvider, ConfirmProvider } from './ui'
 import { App, type ColumnInfo } from './App'
+import { useColumnFormatSync, type ColumnFormatOverrides } from './columnFormatSync'
+import { withDateFormat } from './defaultDateFormat'
 import type { SelectionScope, CellEventInfo } from './useCellSelection'
 import { TableThemeProvider, type TableClassNames, type TablePart } from './theme'
 import type {
@@ -41,6 +43,9 @@ export type SpreadsheetTableProps = {
   // 10 silently hid everything past row 10 with no way to reach it.
   pageSize?: number
   readOnly?: boolean
+  dateFormat?: string
+  columnFormats?: ColumnFormatOverrides
+  onColumnFormatsChange?: (formats: ColumnFormatOverrides) => void
   // Called after any edit (typing, fill, paste, clear, delete or row reorder)
   // with the full, current rows — the way to read the user's changes back out.
   // Not called for the initial `data`.
@@ -123,6 +128,9 @@ export function SpreadsheetTable({
   cols,
   pageSize,
   readOnly,
+  dateFormat,
+  columnFormats,
+  onColumnFormatsChange,
   onDataChange,
   onCellChange,
   onColumnChange,
@@ -168,13 +176,16 @@ export function SpreadsheetTable({
     ],
   )
 
+  useColumnFormatSync(columnFormats, onColumnFormatsChange)
+  const resolvedColumns = React.useMemo(() => withDateFormat(columns, dateFormat), [columns, dateFormat])
+
   return (
     <MotionConfig reducedMotion="user">
       <TableThemeProvider classNames={classNames}>
         <ToastProvider>
           <ConfirmProvider>
             <App
-              columns={columns as never}
+              columns={resolvedColumns as never}
               data={data as never}
               rows={rows}
               cols={cols}
@@ -209,6 +220,8 @@ export type {
   SortingState,
 } from './list'
 export type { ColumnDef }
+export type { ColumnFormatOverrides }
+export type { ColumnFormat, ColumnFormats, DatePattern } from './list'
 export type { SelectionScope, CellEventInfo, ColumnInfo }
 export type { TableClassNames, TablePart }
 export type {
