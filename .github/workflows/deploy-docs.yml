@@ -113,9 +113,15 @@ jobs:
             echo "SSH_PORT_CLEAN=$PORT"
           } >> "$GITHUB_ENV"
 
-          # Strip \r that browser paste on Windows injects — a single
-          # stray carriage return silently corrupts OPENSSH key parsing.
-          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          # The secret can be stored as either:
+          #   (a) raw PEM/OPENSSH text   — works if GitHub preserved newlines
+          #   (b) base64-encoded blob    — immune to newline mangling
+          # Detect which one we got and normalise to a file ssh can read.
+          if printf '%s' "$SSH_PRIVATE_KEY" | head -1 | grep -q "^-----BEGIN"; then
+            printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          else
+            printf '%s' "$SSH_PRIVATE_KEY" | tr -d '[:space:]' | base64 -d > ~/.ssh/deploy_key
+          fi
           chmod 600 ~/.ssh/deploy_key
 
           # Debug: key format and line count (never prints the key itself).
