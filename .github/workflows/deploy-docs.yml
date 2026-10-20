@@ -113,8 +113,16 @@ jobs:
             echo "SSH_PORT_CLEAN=$PORT"
           } >> "$GITHUB_ENV"
 
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          # Strip \r that browser paste on Windows injects — a single
+          # stray carriage return silently corrupts OPENSSH key parsing.
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+
+          # Debug: key format and line count (never prints the key itself).
+          echo "Key lines: $(wc -l < ~/.ssh/deploy_key)"
+          head -1 ~/.ssh/deploy_key
+          tail -1 ~/.ssh/deploy_key
+          ssh-keygen -l -f ~/.ssh/deploy_key || echo "::warning::ssh-keygen could not parse the deploy key"
 
           # Is the port even reachable? Distinguishes the two failures that
           # look identical from the keyscan alone: a refused connection comes
