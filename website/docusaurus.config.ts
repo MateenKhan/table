@@ -5,24 +5,19 @@ import type * as Preset from '@docusaurus/preset-classic';
 const GITHUB = 'https://github.com/MateenKhan/table';
 const NPM = 'https://www.npmjs.com/package/@jugaaadi/table';
 
-/**
- * The demo is the application itself — Vite builds it and CI drops it in at
- * /demo, so it is not a Docusaurus route and `onBrokenLinks: 'throw'` cannot
- * see it. Linking absolutely keeps the strict check on for every real doc link
- * instead of downgrading the whole site to warnings for this one path.
- */
-const DEMO = 'https://table.jugaaadi.com/demo/';
+/** The landing page + interactive demo is the Vite app at root (/). */
+const DEMO = 'https://table.jugaaadi.com/';
 
 const config: Config = {
   title: '@jugaaadi/table',
   tagline:
     'A spreadsheet-style data table for React — editable cells, formulas, rich column types and a query builder',
-  favicon: 'img/favicon.ico',
+  favicon: '/favicon.svg',
 
   future: { v4: true },
 
   url: 'https://table.jugaaadi.com',
-  baseUrl: '/',
+  baseUrl: '/docs/',
 
   organizationName: 'MateenKhan',
   projectName: 'table',
@@ -37,7 +32,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          routeBasePath: 'docs',
+          routeBasePath: '/',
           editUrl: `${GITHUB}/tree/main/website/`,
         },
         blog: false,
@@ -57,10 +52,8 @@ const config: Config = {
           position: 'left',
           label: 'Docs',
         },
-        { to: '/docs/query', label: 'Query', position: 'left' },
-        { to: '/docs/theming', label: 'Theming', position: 'left' },
-        // The demo is the real application, built by Vite and dropped into
-        // /demo by CI — not a Docusaurus route, hence href rather than to.
+        { to: '/query', label: 'Query', position: 'left' },
+        { to: '/theming', label: 'Theming', position: 'left' },
         { href: DEMO, label: 'Live demo', position: 'left' },
         { href: NPM, label: 'npm', position: 'right' },
         { href: GITHUB, label: 'GitHub', position: 'right' },
@@ -72,10 +65,10 @@ const config: Config = {
         {
           title: 'Docs',
           items: [
-            { label: 'Getting started', to: '/docs/intro' },
-            { label: 'Integrating', to: '/docs/integrating' },
-            { label: 'Query builder', to: '/docs/query' },
-            { label: 'Theming', to: '/docs/theming' },
+            { label: 'Getting started', to: '/intro' },
+            { label: 'Integrating', to: '/integrating' },
+            { label: 'Query builder', to: '/query' },
+            { label: 'Theming', to: '/theming' },
           ],
         },
         {

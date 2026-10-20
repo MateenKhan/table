@@ -3,9 +3,8 @@ name: Deploy docs site
 # Builds on GitHub's runners and ships only the static output to the VPS.
 # No container, no build tooling on the server — nginx just serves a folder.
 #
-# Two builds go out together: the Docusaurus site, and the app itself, which is
-# dropped in at /demo so the landing page can frame the real thing rather than a
-# screenshot.
+# The Vite app (landing page + interactive demo) serves as the root.
+# Docusaurus docs are nested under /docs/.
 
 on:
   push:
@@ -61,10 +60,7 @@ jobs:
           rm -f package-lock.json
           npm install --no-audit --no-fund
 
-      - name: Build the demo app
-        env:
-          # Asset URLs must be written for the sub-path it is served from.
-          DEMO_BASE: /demo/
+      - name: Build the landing page + demo app
         run: npm run build
 
       # ── the docs site ─────────────────────────────────────────────────────
@@ -79,16 +75,19 @@ jobs:
         working-directory: website
         run: npm run build
 
-      - name: Place the demo inside the site
+      - name: Assemble site (landing at /, docs at /docs/)
         run: |
-          rm -rf website/build/demo
-          mkdir -p website/build/demo
-          cp -r dist/. website/build/demo/
+          # The Vite app (landing page + interactive demo) is the root.
+          # Docusaurus docs are nested under /docs/.
+          mkdir -p dist/docs
+          cp -r website/build/. dist/docs/
 
-          # A missing demo would still deploy as a working site with a dead
-          # link, which is the kind of failure nobody notices for a week.
-          if [ ! -f website/build/demo/index.html ]; then
-            echo "::error::Demo build is missing — website/build/demo/index.html was not produced."
+          if [ ! -f dist/index.html ]; then
+            echo "::error::Landing page build is missing — dist/index.html was not produced."
+            exit 1
+          fi
+          if [ ! -f dist/docs/index.html ]; then
+            echo "::error::Docs build is missing — dist/docs/index.html was not produced."
             exit 1
           fi
 
@@ -167,13 +166,13 @@ jobs:
 
           # Trailing slash on the source is required, or rsync nests a
           # build/ directory inside the web root.
-          rsync -az --delete -e "$SSH" website/build/ "$TARGET:$WEB_ROOT/"
+          rsync -az --delete -e "$SSH" dist/ "$TARGET:$WEB_ROOT/"
 
       - name: Summary
         run: |
           {
             echo "Deployed to https://table.jugaaadi.com"
             echo ""
+            echo "- Landing + demo: https://table.jugaaadi.com/"
             echo "- Docs: https://table.jugaaadi.com/docs/intro"
-            echo "- Live demo: https://table.jugaaadi.com/demo/"
           } >> "$GITHUB_STEP_SUMMARY"
