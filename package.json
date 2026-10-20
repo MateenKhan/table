@@ -20,7 +20,17 @@
     "data-grid",
     "datagrid",
     "editable",
-    "formulas"
+    "formulas",
+    "merge-cells",
+    "cell-merge",
+    "column-types",
+    "csv-export",
+    "find-replace",
+    "formatting",
+    "borders",
+    "data-table",
+    "react-component",
+    "open-source"
   ],
   "type": "module",
   "main": "./dist/table.js",
@@ -57,20 +67,21 @@
     "serve": "vite preview",
     "start": "vite",
     "prepack": "npm run build:lib",
-    "prepublishOnly": "npm run build:lib",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test:formula": "tsx src/formula.test.ts && tsx src/formulaPointing.test.ts && tsx src/globalSearch.test.ts && tsx src/fillSeries.test.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run test:formula && npm run build:lib"
   },
   "peerDependencies": {
-    "react": ">=18",
-    "react-dom": ">=18",
     "@tanstack/match-sorter-utils": "^8.19.4",
     "date-fns": "^4.4.0",
     "framer-motion": "^12.42.2",
     "lucide-react": "^0.469.0",
     "lz-string": "^1.5.0",
+    "react": ">=18",
     "react-colorful": "^5.8.0",
     "react-day-picker": "^9.14.0",
+    "react-dom": ">=18",
     "react-dropzone": "^14.4.1"
   },
   "peerDependenciesMeta": {
@@ -128,6 +139,7 @@
     "react-dom": "^18.3.1",
     "react-dropzone": "^14.4.1",
     "tailwindcss": "^3.4.19",
+    "tsx": "^4.23.15",
     "typescript": "5.4.5",
     "vite": "^6.4.3",
     "vite-plugin-dts": "^5.0.3",

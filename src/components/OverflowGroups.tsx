@@ -19,7 +19,7 @@ type Props = {
   className?: string
 }
 
-const GAP = 8 // matches the container's gap-2
+const GAP = 4 // matches the container's gap-1
 const MORE_WIDTH = 44 // the "⋮" button's footprint incl. its own gap
 
 export default function OverflowGroups({ children, className = '' }: Props) {
@@ -153,7 +153,7 @@ export default function OverflowGroups({ children, className = '' }: Props) {
   return (
     <div
       ref={containerRef}
-      className={`flex min-w-0 items-center gap-2 ${className}`.trim()}
+      className={`flex min-w-0 items-center gap-1 ${className}`.trim()}
     >
       {items.map((child, i) =>
         i < visibleCount ? (
@@ -189,7 +189,7 @@ export default function OverflowGroups({ children, className = '' }: Props) {
             <div
               ref={menuRef}
               data-popover-portal=""
-              className="fixed z-[100] flex max-w-[90vw] flex-col items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 pt-4 shadow-lg"
+              className="fixed z-[100] flex max-w-[90vw] flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white p-2 pt-3 shadow-lg"
               style={{
                 left: menuPos?.left ?? -9999,
                 top: menuPos?.top ?? -9999,

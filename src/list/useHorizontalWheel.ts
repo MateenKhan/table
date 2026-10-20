@@ -16,12 +16,13 @@ export function scrollSideways(el: HTMLElement, event: WheelEvent): boolean {
   return true
 }
 
-export function useHorizontalWheel(ref: React.RefObject<HTMLElement>) {
+export function useHorizontalWheel(ref: React.RefObject<HTMLElement>, disabled?: boolean) {
   React.useEffect(() => {
+    if (disabled) return
     const el = ref.current
     if (!el) return
     const onWheel = (event: WheelEvent) => scrollSideways(el, event)
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [ref])
+  }, [ref, disabled])
 }

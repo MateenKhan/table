@@ -148,6 +148,7 @@ function DefaultCell(props: CellContext<Person, unknown>) {
 // Give our default column cell renderer editing superpowers!
 export const defaultColumn: Partial<ColumnDef<Person>> = {
   cell: (props) => <DefaultCell {...props} />,
+  minSize: 60,
   // Natural order everywhere unless a column asks for something else — so
   // `item2` precedes `item10` and `File 9` precedes `File 10`. TanStack's
   // default would auto-pick `alphanumeric`, which is close but splits on

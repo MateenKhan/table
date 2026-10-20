@@ -40,7 +40,7 @@ const NO_EXPANDED: ExpandedState = {}
 const CAN_EXPAND = () => true
 const NO_FORMATS: ColumnFormats = {}
 const NO_VISIBILITY: VisibilityState = {}
-const DEFAULT_COLUMN = { filterFn: 'includesString' as const, minSize: 48 }
+const DEFAULT_COLUMN = { filterFn: 'includesString' as const, minSize: 100 }
 
 export function ListTable<TData>({
   columns,
@@ -88,6 +88,7 @@ export function ListTable<TData>({
   toolbar,
   className,
   caption,
+  disableHorizontalWheel = false,
 }: ListTableProps<TData>) {
   const labels = React.useMemo(
     () => ({
@@ -125,7 +126,7 @@ export function ListTable<TData>({
   const formatOptions = React.useMemo<FormatOptions>(() => ({ locale, dateFormat }), [locale, dateFormat])
   const metaRef = React.useRef<{ listView?: ReturnType<typeof useListView<TData>> }>({})
   const scrollRef = React.useRef<HTMLDivElement>(null)
-  useHorizontalWheel(scrollRef)
+  useHorizontalWheel(scrollRef, disableHorizontalWheel)
   const [expanded, setExpanded] = useControllable(expandedProp, onExpandedChange, NO_EXPANDED)
   const [showFilters, setShowFilters] = React.useState(() => !!columnFiltersProp?.length)
 

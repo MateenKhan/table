@@ -139,6 +139,7 @@ export type ToolbarActionId =
   | 'delete-all'
   | 'find'
   | 'functions'
+  | 'export-csv'
   | 'settings'
   | 'help'
   | 'pagination'
@@ -202,6 +203,7 @@ type ActionSpec = {
 const ACTION_PRIORITY: readonly ActionSpec[] = [
   { id: 'clear', scope: 'selection' },
   { id: 'save', scope: 'always' },
+  { id: 'export-csv', scope: 'always' },
   { id: 'reload', scope: 'always' },
   { id: 'delete-all', scope: 'always', dividerBefore: true },
   { id: 'find', scope: 'always', dividerBefore: true },

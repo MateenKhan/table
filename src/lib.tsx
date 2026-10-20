@@ -103,6 +103,7 @@ export type SpreadsheetTableProps = {
   // popup, toast, lightbox). See the README "Theming" section; you can also
   // recolor with `--jt-*` CSS variables or target `[data-jt="…"]` in plain CSS.
   classNames?: TableClassNames
+  disableHorizontalWheel?: boolean
 }
 
 /**
@@ -150,6 +151,7 @@ export function SpreadsheetTable({
   onUploadDrop,
   exportEmbedLimit,
   classNames,
+  disableHorizontalWheel,
 }: SpreadsheetTableProps) {
   // Bundle every attachment-related prop into the config the cells read. Kept
   // stable across renders so the provider does not thrash.
@@ -203,6 +205,7 @@ export function SpreadsheetTable({
               onRowHeaderClick={onRowHeaderClick}
               attachmentConfig={attachmentConfig}
               exportEmbedLimit={exportEmbedLimit}
+              disableHorizontalWheel={disableHorizontalWheel}
             />
           </ConfirmProvider>
         </ToastProvider>

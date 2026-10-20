@@ -42,7 +42,7 @@ function BodyCell<TData>({ cell, href }: { cell: Cell<TData, unknown>; href?: st
   const content = expander ? flexRender(cell.column.columnDef.cell, cell.getContext()) : <CellContent cell={cell} />
   return (
     <td
-      style={pinStyle(cell.column)}
+      style={{ minWidth: cell.column.columnDef.minSize, ...pinStyle(cell.column) }}
       className={cx('jtl-td', expander && 'jtl-td--expander', alignClass(cell.column), pinEdgeClass(cell.column))}
     >
       {href ? (

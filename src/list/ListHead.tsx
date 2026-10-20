@@ -33,7 +33,7 @@ function HeadCell<TData>({ header }: { header: Header<TData, unknown> }) {
       colSpan={header.colSpan}
       scope="col"
       aria-sort={leaf && sorted ? ARIA_SORT[sorted] : undefined}
-      style={{ width: header.getSize(), ...(leaf ? pinStyle(column) : undefined) }}
+      style={{ width: header.getSize(), minWidth: column.columnDef.minSize, ...(leaf ? pinStyle(column) : undefined) }}
       className={cx('jtl-th', alignClass(column), leaf && pinEdgeClass(column))}
     >
       {leaf && column.getCanSort() && !header.isPlaceholder ? (

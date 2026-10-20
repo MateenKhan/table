@@ -16,6 +16,8 @@ import {
   ChevronDown,
   Combine,
   Eraser,
+  TableCellsMerge,
+  TableCellsSplit,
   Eye,
   EyeOff,
   FunctionSquare,
@@ -211,6 +213,9 @@ export type ContextActionProps<T extends RowData> = {
   // Multi-column target only: merge the selected columns into one. Renders a
   // standalone violet Merge button when wired.
   onMergeColumns?: () => void
+  onMergeCells?: () => void
+  onUnmergeCells?: () => void
+  hasMergeInSelection?: boolean
 }
 
 const ALIGNMENTS: { value: Align; label: string }[] = [
@@ -258,11 +263,11 @@ const GROUP_META: Record<
   StripGroup,
   { caption: string; tone: 'teal' | 'sky' | 'violet' | 'emerald' | 'amber' }
 > = {
-  structure: { caption: 'Structure', tone: 'amber' },
-  format: { caption: 'Format', tone: 'teal' },
-  column: { caption: 'Column', tone: 'sky' },
-  row: { caption: 'Row', tone: 'violet' },
-  formula: { caption: 'Formula', tone: 'emerald' },
+  structure: { caption: 'structure', tone: 'amber' },
+  format: { caption: 'format', tone: 'teal' },
+  column: { caption: 'column', tone: 'sky' },
+  row: { caption: 'row', tone: 'violet' },
+  formula: { caption: 'formula', tone: 'emerald' },
 }
 
 // Relevance: the group weight for each selection kind, highest first. This is
@@ -511,11 +516,11 @@ function ClusterBox({
   // Extra top room (mt-1 + pt-2) keeps the -top-2 caption clear of the icon row.
   return (
     <div
-      className={`relative mt-1 inline-flex shrink-0 items-center gap-1 rounded-lg border ${border} bg-white px-2 pb-1 pt-2`}
+      className={`relative inline-flex shrink-0 items-center gap-0.5 rounded-md border ${border} bg-white px-1.5 py-0.5`}
     >
       {name ? (
         <span
-          className={`absolute -top-2 left-2 bg-white px-1 text-[10px] font-semibold uppercase tracking-wide ${text}`}
+          className={`absolute -top-1.5 left-1.5 bg-white px-0.5 text-[9px] font-medium leading-none ${text}`}
         >
           {name}
         </span>
@@ -809,6 +814,9 @@ export function useContextActions<T extends RowData>(
     fontSizes,
     fontFamilies,
     onMergeColumns,
+    onMergeCells,
+    onUnmergeCells,
+    hasMergeInSelection,
   } = props
 
   // Subscribe so swatch selection / clearing reflects instantly.
@@ -983,6 +991,25 @@ export function useContextActions<T extends RowData>(
           icon={<Baseline size={14} className="text-violet-600" />}
         />
       ),
+    },
+    {
+      id: 'cell-merge',
+      label: 'Merge cells',
+      group: 'format',
+      applies: (f) => !!onMergeCells && (f.kind === 'range' || f.kind === 'rows' || f.kind === 'columns'),
+      icon: TableCellsMerge,
+      tone: 'violet',
+      dividerBefore: true,
+      onSelect: () => onMergeCells!(),
+    },
+    {
+      id: 'cell-unmerge',
+      label: 'Unmerge cells',
+      group: 'format',
+      applies: () => !!onUnmergeCells && !!hasMergeInSelection,
+      icon: TableCellsSplit,
+      tone: 'neutral',
+      onSelect: () => onUnmergeCells!(),
     },
     ...TEXT_STYLES.map<StripAction>(({ key, label, shortcut, icon: Icon }, index) => ({
       id: `text-${key}`,
@@ -1651,7 +1678,6 @@ export function useTextStyleShortcuts(
 export function CellContextStrip<T extends RowData>(
   props: ContextActionProps<T>,
 ) {
-  const { title } = props
   const { actions, toggleTextStyle } = useContextActions(props)
   useTextStyleShortcuts(toggleTextStyle)
 
@@ -1680,21 +1706,7 @@ export function CellContextStrip<T extends RowData>(
   }
 
   return (
-    <div className="flex w-full min-w-0 items-center gap-1.5 px-1.5 py-1.5 text-sm text-slate-700">
-      {/* The eyebrow. `title` has been a prop — and passed by every call site —
-          since the strip was a popup, but it was never destructured, so users
-          had no confirmation of WHAT the strip was about to act on. It is the
-          first thing on the strip now, and it never scrolls or overflows away. */}
-      {title ? (
-        <span
-          className="shrink-0 whitespace-nowrap rounded-md bg-slate-100 px-2 py-1 text-2xs font-semibold uppercase tracking-wide text-slate-500"
-          title={`Acting on ${title}`}
-        >
-          {title}
-        </span>
-      ) : null}
-      {/* No `overflow-x-auto` any more: what does not fit goes into the "⋮"
-          menu instead of off the right-hand edge of a clipped scroller. */}
+    <div className="flex w-full min-w-0 items-center gap-1 px-1 py-1 text-sm text-slate-700">
       <OverflowGroups className="min-w-0 flex-1">
         {runs.flatMap((run, runIndex) =>
           // One box per SLICE of a run, not per run — see splitRunForOverflow.

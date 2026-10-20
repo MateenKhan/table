@@ -80,6 +80,7 @@ export type ListTableProps<TData> = {
   toolbar?: React.ReactNode
   className?: string
   caption?: string
+  disableHorizontalWheel?: boolean
 }
 
 declare module '@tanstack/react-table' {

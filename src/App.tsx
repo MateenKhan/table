@@ -56,6 +56,8 @@ import {
   renameSheetInFormulas,
 } from './formula'
 import { crossSheet, useCrossSheetVersion } from './crossSheet'
+import { addMerge, removeMergesIn } from './cellMerge'
+import type { MergeMap } from './cellMerge'
 import { buildRowPermutation } from './useRowDrag'
 import {
   clearColumnTypesForSheet,
@@ -106,7 +108,7 @@ import StatsBar from './components/StatsBar'
 import FindReplaceDialog from './components/FindReplaceDialog'
 import SettingsDialog from './components/SettingsDialog'
 import { readSharedSnapshotFromUrl, type AppSnapshot } from './snapshot'
-import { HelpCircle, Replace, Settings } from 'lucide-react'
+import { Download, HelpCircle, Replace, Settings } from 'lucide-react'
 import ThumbnailSizeProvider, { ThumbnailSize } from './thumbnailSize'
 import { releaseAllAttachments, collectAttachmentUrls } from './attachments'
 import {
@@ -224,6 +226,8 @@ type AppProps = {
   // = embed everything regardless of size.
   exportEmbedLimit?: number
   readOnly?: boolean
+  disableHorizontalWheel?: boolean
+  embedded?: boolean
 }
 
 // Stable identity so an embed that passes no attachment config never re-renders
@@ -244,9 +248,10 @@ const BLANK_SHEET_ROWS = 20
  * 'pagination' action), and this is the other half of the same fix: the default
  * page has to be big enough that the empty sheet is one page. Sized a little
  * above the blank sheet so the first few rows a user adds do not summon it
- * either; real data past 25 rows still pages, which is what a pager is for.
+ * either. Consumers can pass pageSize to enable pagination at a specific
+ * threshold; the standalone demo shows all rows by default.
  */
-const STANDALONE_PAGE_SIZE = 25
+const STANDALONE_PAGE_SIZE = 500
 
 const VIEW_TOOLBAR_IDS = new Set(['settings', 'help', 'pagination', 'profiles'])
 
@@ -330,6 +335,8 @@ export const App = ({
   attachmentConfig,
   exportEmbedLimit,
   readOnly = false,
+  disableHorizontalWheel = false,
+  embedded = false,
 }: AppProps = {}) => {
   // Consumer theming hook for the whole-app root surface.
   const rootPartClass = usePartClass('root')
@@ -599,6 +606,7 @@ export const App = ({
   // Per-row heights (data-row index → px), lifted here so a resized row is part
   // of the exported/cloned view. CustomTable drives it as a controlled prop.
   const [rowHeights, setRowHeights] = React.useState<Record<number, number>>({})
+  const [mergedCells, setMergedCells] = React.useState<MergeMap>([])
 
   // A user-authored schema. `null` means "use the built-in schema" (the demo /
   // profile columns); once the user wipes the table with Delete-all they get a
@@ -696,14 +704,25 @@ export const App = ({
 
   // Append a new blank column (blank-sheet mode only). Also seed the key on every
   // existing row so the new cells are addressable immediately.
-  const addColumn = React.useCallback(() => {
+  const addColumn = React.useCallback((count: number = 1) => {
     setCustomColumns((prev) => {
       if (!prev) return prev
-      const id = `col${nextBlankColumnId(prev)}`
+      const newCols: typeof prev = []
+      let base = nextBlankColumnId(prev)
+      for (let i = 0; i < count; i++) {
+        const id = `col${base + i}`
+        newCols.push(makeBlankColumn(id))
+      }
+      const newIds = newCols.map((c) => String(c.id))
       setData((rows) =>
-        rows.map((r) => ({ ...(r as object), [id]: '' }) as unknown as Person),
+        rows.map((r) => {
+          const obj = r as unknown as Record<string, unknown>
+          const extra: Record<string, unknown> = {}
+          for (const id of newIds) extra[id] = ''
+          return { ...obj, ...extra } as unknown as Person
+        }),
       )
-      return [...prev, makeBlankColumn(id)]
+      return [...prev, ...newCols]
     })
   }, [])
 
@@ -713,16 +732,18 @@ export const App = ({
   // history (both keyed by index) are cleared rather than replayed onto the
   // wrong rows.
   const insertRow = React.useCallback(
-    (dataRowIndex: number, side: 'above' | 'below') => {
+    (dataRowIndex: number, side: 'above' | 'below', count: number = 1) => {
       setFormulas({})
       history.clear()
       setData((prev) => {
-        const row = (
-          customColumns ? blankRow(customColumns.map((c) => String(c.id))) : {}
-        ) as unknown as Person
+        const ids = customColumns ? customColumns.map((c) => String(c.id)) : null
+        const rows: Person[] = []
+        for (let i = 0; i < count; i++) {
+          rows.push((ids ? blankRow(ids) : {}) as unknown as Person)
+        }
         const at = side === 'above' ? dataRowIndex : dataRowIndex + 1
         const clamped = Math.max(0, Math.min(at, prev.length))
-        return [...prev.slice(0, clamped), row, ...prev.slice(clamped)]
+        return [...prev.slice(0, clamped), ...rows, ...prev.slice(clamped)]
       })
     },
     [customColumns, history],
@@ -731,16 +752,20 @@ export const App = ({
   // (`deleteColumn` lives next to `insertColumnAt` further down: it needs the
   // same materialise-the-schema-first machinery, which is only in scope there.)
 
-  // Append one empty row. In blank-sheet mode it carries every custom column id;
+  // Append empty rows. In blank-sheet mode they carry every custom column id;
   // otherwise an empty object reads as blank cells against the default schema.
-  const addRow = React.useCallback(() => {
+  // skipAutoResetPageIndex keeps TanStack from bouncing back to page 0.
+  const addRow = React.useCallback((count: number = 1) => {
+    skipAutoResetPageIndex()
     setData((rows) => {
-      const row = customColumns
-        ? blankRow(customColumns.map((c) => String(c.id)))
-        : {}
-      return [...rows, row as unknown as Person]
+      const ids = customColumns ? customColumns.map((c) => String(c.id)) : null
+      const extra: Person[] = []
+      for (let i = 0; i < count; i++) {
+        extra.push((ids ? blankRow(ids) : {}) as unknown as Person)
+      }
+      return [...rows, ...extra]
     })
-  }, [customColumns])
+  }, [customColumns, skipAutoResetPageIndex])
 
   // Append `count` blank rows at the END of the sheet. This is what lets a paste
   // grow the grid instead of silently dropping the rows that would not fit.
@@ -849,6 +874,14 @@ export const App = ({
       ...prev.filter((m) => !m.columnIds.some((c) => claimed.has(c))),
       { id: mergeIdFor('group', columnIds), mode: 'group', header: 'Merged', columnIds },
     ])
+  }, [])
+
+  const mergeCells = React.useCallback((anchorRow: number, anchorCol: number, rowSpan: number, colSpan: number) => {
+    setMergedCells((prev) => addMerge(prev, { anchorRow, anchorCol, rowSpan, colSpan }))
+  }, [])
+
+  const unmergeCells = React.useCallback((anchorRow: number, anchorCol: number, rowSpan: number, colSpan: number) => {
+    setMergedCells((prev) => removeMergesIn(prev, anchorRow, anchorCol, anchorRow + rowSpan - 1, anchorCol + colSpan - 1))
   }, [])
 
   // Settings (format profiles + saved queries + export/share) and Find dialogs.
@@ -1200,6 +1233,31 @@ export const App = ({
     })
   }, [data, table])
 
+  const exportCsv = React.useCallback(() => {
+    const cols = table
+      .getVisibleLeafColumns()
+      .filter((col) => !SKIP_COLUMNS.includes(col.id))
+    const escape = (v: unknown): string => {
+      const s = v == null ? '' : String(v)
+      return /[,"\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+    }
+    const header = cols.map((col) => {
+      const h = col.columnDef.header
+      return escape(typeof h === 'string' ? h : col.id)
+    })
+    const rows = data.map((row) =>
+      cols.map((col) => escape((row as Record<string, unknown>)[col.id])),
+    )
+    const csv = [header, ...rows].map((r) => r.join(',')).join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${activeSheetId ?? 'sheet'}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [table, data, activeSheetId])
+
   // Apply a structural edit to whichever column tree is currently in charge:
   // the user's blank sheet, an imported clone, or — when neither exists yet —
   // the built-in schema, materialised into an editable clone on the spot so the
@@ -1239,22 +1297,23 @@ export const App = ({
   // leaf is spliced in as a sibling of the target column wherever it sits in the
   // group tree. Every row gets the new key so its cells are addressable at once.
   const insertColumnAt = React.useCallback(
-    (columnId: string, side: 'left' | 'right') => {
-      const newId = `col_${Date.now().toString(36)}${Math.random()
-        .toString(36)
-        .slice(2, 5)}`
-      const newCol = makeBlankColumn(newId)
-      // Fold computed column values into the rows first (no-op once the schema
-      // is already user-owned), then seed the new key on every row. Both are
-      // functional so a repeated insert composes instead of clobbering.
+    (columnId: string, side: 'left' | 'right', count: number = 1) => {
+      const newCols: { id: string; col: ReturnType<typeof makeBlankColumn> }[] = []
+      for (let i = 0; i < count; i++) {
+        const newId = `col_${Date.now().toString(36)}${Math.random()
+          .toString(36)
+          .slice(2, 5)}_${i}`
+        newCols.push({ id: newId, col: makeBlankColumn(newId) })
+      }
       materializeRows()
       setData((prev) =>
-        (prev as unknown as Record<string, unknown>[]).map(
-          (r) => ({ ...r, [newId]: '' }) as unknown as Person,
-        ),
+        (prev as unknown as Record<string, unknown>[]).map((r) => {
+          const extra: Record<string, unknown> = {}
+          for (const { id } of newCols) extra[id] = ''
+          return { ...r, ...extra } as unknown as Person
+        }),
       )
 
-      // Recursively rebuild the tree, inserting `newCol` beside the target leaf.
       editSchema((defs) => {
         let done = false
         const walk = (arr: unknown[]): unknown[] => {
@@ -1265,8 +1324,9 @@ export const App = ({
               out.push({ ...def, columns: walk(def.columns) })
             } else if (!done && String(def.id ?? def.accessorKey) === columnId) {
               done = true
-              if (side === 'left') out.push(newCol, def)
-              else out.push(def, newCol)
+              const cols = newCols.map((c) => c.col)
+              if (side === 'left') out.push(...cols, def)
+              else out.push(def, ...cols)
             } else {
               out.push(def)
             }
@@ -2229,7 +2289,7 @@ export const App = ({
     <FindHighlightProvider value={findHighlight}>
     <div
       data-jt="root"
-      className={`jt-root h-screen w-full max-w-full overflow-hidden box-border p-1.5 sm:p-3 flex flex-col gap-1.5 ${rootPartClass}`}
+      className={`jt-root ${embedded ? 'h-full' : 'h-screen'} w-full max-w-full overflow-hidden box-border p-1.5 sm:p-3 flex flex-col gap-1.5 ${rootPartClass}`}
     >
       {findBarOpen ? (
         <FindBar
@@ -2261,7 +2321,7 @@ export const App = ({
             onColumnHeaderClick={onColumnHeaderClick}
             onRowHeaderClick={onRowHeaderClick}
           >
-            <div className="flex h-full flex-col gap-1.5">
+            <div className="flex h-full flex-col gap-0.5">
               {/* The tab strip, above the toolbar: one 32px row, the same module
                   as every control below it. Standalone, non-vertical only — see
                   the two exclusions on the `registry` state. */}
@@ -2327,6 +2387,20 @@ export const App = ({
                     node: <SaveSheetButton onSave={saveSheetExplicitly} />,
                   },
                   {
+                    id: 'export-csv',
+                    node: (
+                      <button
+                        type="button"
+                        className="icon-btn-sm border border-teal-200 text-teal-600 sm:hover:bg-teal-50"
+                        onClick={exportCsv}
+                        title="Export as CSV"
+                        aria-label="Export as CSV"
+                      >
+                        <Download size={14} />
+                      </button>
+                    ),
+                  },
+                  {
                     id: 'reload',
                     node: (
                       <ReloadButton
@@ -2360,7 +2434,7 @@ export const App = ({
                     node: (
                       <button
                         type="button"
-                        className="icon-btn-sm border border-slate-300 text-slate-600 sm:hover:bg-slate-100"
+                        className="icon-btn-sm border border-violet-200 text-violet-600 sm:hover:bg-violet-50"
                         onClick={() => setSettingsOpen(true)}
                         title="Settings — profiles, saved queries, export & share"
                         aria-label="Settings"
@@ -2454,6 +2528,10 @@ export const App = ({
                   fontFamilies={[...FONT_FAMILY_OPTIONS]}
                   onMergeColumns={mergeColumns}
                   onReorderRows={reorderRows}
+                  disableHorizontalWheel={disableHorizontalWheel}
+                  mergedCells={mergedCells}
+                  onMergeCells={mergeCells}
+                  onUnmergeCells={unmergeCells}
                   {...(readOnly ? NO_EDITS : null)}
                 />
               </div>

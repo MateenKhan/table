@@ -29,7 +29,7 @@ function tryToClear(value: string) {
   fireEvent.keyDown(window, { key: 'Delete' })
 }
 
-const button = (name: string) => screen.queryByRole('button', { name })
+const button = (name: string) => screen.queryAllByRole('button', { name })[0] ?? null
 
 describe('SpreadsheetTable — editable (default)', () => {
   it('edits a cell and reports it', () => {

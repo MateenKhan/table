@@ -32,7 +32,9 @@ import CellContextStrip from './CellContextPopup'
 import type { ContextActionProps } from './CellContextPopup'
 import CellContextMenu from './CellContextMenu'
 import { useHorizontalWheel } from '../list/useHorizontalWheel'
-import { Lock, Plus } from 'lucide-react'
+import { Lock, Rows3, Columns3, Plus, ArrowUpToLine, ArrowDownToLine } from 'lucide-react'
+import type { MergeMap } from '../cellMerge'
+import { findMerge, isMergeConsumed, hasUnmergeableRegion } from '../cellMerge'
 
 // Applied borders are rendered in TWO layers, because a `border-collapse` grid
 // makes plain per-side `<td>` borders unreliable:
@@ -163,6 +165,124 @@ type MenuTarget =
   | { kind: 'row'; screenRow: number; dataIndex: number }
   | { kind: 'column'; columnId: string }
 
+function AddMenu({
+  kind,
+  onAppend,
+  onInsertAt,
+  onClose,
+}: {
+  kind: 'row' | 'column'
+  onAppend: (count: number) => void
+  onInsertAt?: (position: number, side: 'before' | 'after', count: number) => void
+  onClose: () => void
+}) {
+  const [count, setCount] = React.useState('10')
+  const [position, setPosition] = React.useState('1')
+  const inputRef = React.useRef<HTMLInputElement>(null)
+  const menuRef = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => { inputRef.current?.focus(); inputRef.current?.select() }, [])
+
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const submitAppend = () => {
+    const n = parseInt(count, 10)
+    if (n > 0 && n <= 10000) { onAppend(n); onClose() }
+  }
+  const submitInsert = (side: 'before' | 'after') => {
+    if (!onInsertAt) return
+    const n = parseInt(count, 10)
+    const pos = parseInt(position, 10)
+    if (n > 0 && n <= 10000 && pos >= 1) { onInsertAt(pos, side, n); onClose() }
+  }
+  const posLabel = kind === 'row' ? 'row' : 'col'
+  const iconSize = 14
+
+  const inputCls = 'w-full rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm tabular-nums outline-none transition-colors focus:border-sky-400 focus:bg-white'
+  const btnCls = 'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-slate-700 transition-colors sm:hover:bg-slate-100 focus:bg-slate-100 active:bg-slate-200 outline-none'
+
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      className="jt-add-menu rounded-lg border border-slate-200 bg-white shadow-lg"
+      style={{ position: 'absolute', bottom: 40, right: 0, zIndex: 20, width: 220, overflow: 'hidden' }}
+    >
+      <style>{`
+        @media (pointer: coarse) {
+          .jt-add-menu { width: 280px !important; }
+          .jt-add-menu input { min-height: 44px !important; font-size: 16px !important; }
+          .jt-add-menu button { min-height: 44px !important; }
+        }
+      `}</style>
+      {/* ── count + add at end ── */}
+      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2.5">
+        <input
+          ref={inputRef}
+          type="number"
+          min={1}
+          max={10000}
+          value={count}
+          onChange={(e) => setCount(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submitAppend(); if (e.key === 'Escape') onClose() }}
+          className={inputCls}
+          style={{ width: 56, flexShrink: 0 }}
+        />
+        <button type="button" onClick={submitAppend} className={btnCls + ' flex-1 justify-center font-medium text-sky-700 sm:hover:bg-sky-50 focus:bg-sky-50'}>
+          <Plus size={iconSize} className="flex-none" />
+          Add at end
+        </button>
+      </div>
+      {/* ── insert at position ── */}
+      {onInsertAt ? (
+        <div className="px-3 py-2.5">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wide flex-none">At {posLabel}</span>
+            <input
+              type="number"
+              min={1}
+              value={position}
+              onChange={(e) => setPosition(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submitInsert('after'); if (e.key === 'Escape') onClose() }}
+              className={inputCls}
+              style={{ width: 56, flexShrink: 0 }}
+            />
+          </div>
+          <div className="flex gap-1">
+            <button type="button" onClick={() => submitInsert('before')} className={btnCls + ' flex-1 justify-center'}>
+              <ArrowUpToLine size={iconSize} className="flex-none text-slate-400" />
+              Before
+            </button>
+            <button type="button" onClick={() => submitInsert('after')} className={btnCls + ' flex-1 justify-center'}>
+              <ArrowDownToLine size={iconSize} className="flex-none text-slate-400" />
+              After
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function useLongPress(callback: () => void, ms = 500) {
+  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fired = React.useRef(false)
+  const onStart = React.useCallback((e: React.TouchEvent | React.PointerEvent) => {
+    fired.current = false
+    timer.current = setTimeout(() => { fired.current = true; callback() }, ms)
+    if ('touches' in e) e.preventDefault()
+  }, [callback, ms])
+  const onEnd = React.useCallback(() => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null }
+  }, [])
+  return { onStart, onEnd, didFire: fired }
+}
+
 // Width of the leftmost row-number gutter. It lives OUTSIDE TanStack's column
 // model, so every left-pinned column has to be pushed right by exactly this much
 // (see `shiftedHeaderStyle` / `shiftedCellStyle`) to sit beside it rather than
@@ -278,17 +398,17 @@ type Props<T extends RowData> = {
   opsSlot?: HTMLElement | null
   // "Blank sheet" building blocks. Each is optional — its affordance renders only
   // when App wires the handler, so an ordinary (non-blank) table is unchanged.
-  onAddRow?: () => void
-  onAddColumn?: () => void
+  onAddRow?: (count?: number) => void
+  onAddColumn?: (count?: number) => void
   onRenameColumn?: (columnId: string, name: string) => void
   // Selection ops threaded into the contextual strip. Each renders its strip
   // button only when wired: promote a single row to the header, insert a column
   // beside a single selected column, or delete a single selected column.
   onPromoteRowToHeader?: (dataRowIndex: number) => void
-  onInsertColumn?: (columnId: string, side: 'left' | 'right') => void
+  onInsertColumn?: (columnId: string, side: 'left' | 'right', count?: number) => void
   onDeleteColumn?: (columnId: string) => void
-  // Insert a blank row above / below a single selected row.
-  onInsertRow?: (dataRowIndex: number, side: 'above' | 'below') => void
+  // Insert blank row(s) above / below a data row index.
+  onInsertRow?: (dataRowIndex: number, side: 'above' | 'below', count?: number) => void
   // Remove a single selected row entirely (distinct from clearing its contents).
   onDeleteRow?: (dataRowIndex: number) => void
   // Per-row heights (keyed by data-row index). Controlled: when both are wired
@@ -309,6 +429,10 @@ type Props<T extends RowData> = {
   // Absent → the gutter stays a plain click-to-select with no drag.
   onReorderRows?: (fromDataIndex: number, toDataIndex: number) => void
   readOnly?: boolean
+  disableHorizontalWheel?: boolean
+  mergedCells?: MergeMap
+  onMergeCells?: (anchorRow: number, anchorCol: number, rowSpan: number, colSpan: number) => void
+  onUnmergeCells?: (anchorRow: number, anchorCol: number, rowSpan: number, colSpan: number) => void
 }
 
 export function CustomTable<T extends RowData>({
@@ -329,6 +453,10 @@ export function CustomTable<T extends RowData>({
   onMergeColumns,
   onReorderRows,
   readOnly = false,
+  disableHorizontalWheel = false,
+  mergedCells = [],
+  onMergeCells,
+  onUnmergeCells,
 }: Props<T>) {
   const selection = useCellSelection()
   // Re-render whenever any scope's colour / alignment changes.
@@ -551,7 +679,7 @@ export function CustomTable<T extends RowData>({
   // live that is not an <input>. Registering it (once — `register` is stable)
   // lets the selection layer focus it on a cell/header/gutter click.
   const scrollContainerRef = React.useRef<HTMLDivElement>(null)
-  useHorizontalWheel(scrollContainerRef)
+  useHorizontalWheel(scrollContainerRef, disableHorizontalWheel)
   const register = selection?.registerScrollContainer
   React.useEffect(() => {
     if (!register) return
@@ -1038,6 +1166,10 @@ export function CustomTable<T extends RowData>({
           ) : null}
         </td>
         {row.getVisibleCells().map((cell, colIndex) => {
+          if (dataRowIndex >= 0 && isMergeConsumed(mergedCells, dataRowIndex, colIndex)) {
+            return null
+          }
+          const merge = dataRowIndex >= 0 ? findMerge(mergedCells, dataRowIndex, colIndex) : undefined
           // Screen coordinates - see useCellSelection for how these map back
           // onto the underlying data indices.
           const pos = { row: rowIndex, col: colIndex }
@@ -1116,6 +1248,7 @@ export function CustomTable<T extends RowData>({
               key={cell.id}
               data-col-id={cell.column.id}
               data-find-key={findState ? fk : undefined}
+              {...(merge ? { colSpan: merge.colSpan, rowSpan: merge.rowSpan } : {})}
               className={`border border-slate-200 px-2 text-slate-700 ${
                 isFrozen
                   ? 'bg-slate-100'
@@ -1362,6 +1495,41 @@ export function CustomTable<T extends RowData>({
         isColumns && columnIds.length >= 2 && onMergeColumns
           ? () => onMergeColumns(columnIds)
           : undefined,
+      onMergeCells: (() => {
+        if (!onMergeCells || scope.kind === 'cell') return undefined
+        const visibleCols = table.getVisibleLeafColumns()
+        const colIndices = columnIds.map((id) => visibleCols.findIndex((c) => c.id === id)).filter((i) => i >= 0)
+        if (!colIndices.length || !rowIndices.length) return undefined
+        const top = Math.min(...rowIndices)
+        const left = Math.min(...colIndices)
+        const rSpan = Math.max(...rowIndices) - top + 1
+        const cSpan = Math.max(...colIndices) - left + 1
+        if (rSpan <= 1 && cSpan <= 1) return undefined
+        return () => onMergeCells(top, left, rSpan, cSpan)
+      })(),
+      onUnmergeCells: (() => {
+        if (!onUnmergeCells || !mergedCells.length) return undefined
+        const visibleCols = table.getVisibleLeafColumns()
+        const colIndices = columnIds.map((id) => visibleCols.findIndex((c) => c.id === id)).filter((i) => i >= 0)
+        if (!colIndices.length || !rowIndices.length) return undefined
+        const top = Math.min(...rowIndices)
+        const left = Math.min(...colIndices)
+        const bottom = Math.max(...rowIndices)
+        const right = Math.max(...colIndices)
+        if (!hasUnmergeableRegion(mergedCells, top, left, bottom, right)) return undefined
+        return () => onUnmergeCells(top, left, bottom - top + 1, right - left + 1)
+      })(),
+      hasMergeInSelection: (() => {
+        if (!mergedCells.length) return false
+        const visibleCols = table.getVisibleLeafColumns()
+        const colIndices = columnIds.map((id) => visibleCols.findIndex((c) => c.id === id)).filter((i) => i >= 0)
+        if (!colIndices.length || !rowIndices.length) return false
+        const top = Math.min(...rowIndices)
+        const left = Math.min(...colIndices)
+        const bottom = Math.max(...rowIndices)
+        const right = Math.max(...colIndices)
+        return hasUnmergeableRegion(mergedCells, top, left, bottom, right)
+      })(),
     }
   }
 
@@ -1476,14 +1644,12 @@ export function CustomTable<T extends RowData>({
     setMenuAt({ x: rect.left + 4, y: rect.bottom })
   }
 
-  // Full width of the body grid in column-slots: the row-number gutter (1) + one
-  // per visible leaf column + the trailing add-column slot when it exists. Drives
-  // the add-row bar's colSpan so it spans the whole table.
-  const totalColSpan =
-    1 + leafColumns.length + (onAddColumn ? 1 : 0)
+  const [bulkAddTarget, setBulkAddTarget] = React.useState<'row' | 'column' | null>(null)
+  const rowLp = useLongPress(React.useCallback(() => setBulkAddTarget('row'), []))
+  const colLp = useLongPress(React.useCallback(() => setBulkAddTarget('column'), []))
 
   return (
-    <div className="flex h-full w-full min-h-0 flex-col">
+    <div className="flex h-full w-full min-h-0 flex-col" style={{ position: 'relative' }}>
       {/* Contextual ops strip. When App provides a slot it is portaled into the
           actions div (no actions in the table); otherwise it docks inline above
           the table as a fallback. Hidden when nothing is selected. */}
@@ -1541,6 +1707,7 @@ export function CustomTable<T extends RowData>({
         // visible — silently resized every column and the grid jumped under the
         // cursor.
         className="table-fixed border-separate border-spacing-0 text-sm text-slate-700"
+        style={{ width: table.getTotalSize() + ROW_NUMBER_WIDTH + (onAddColumn ? 40 : 0) }}
       >
         <thead ref={theadRef}>
           {/* Coordinate-letter row + the corner "select all" cell. */}
@@ -1654,14 +1821,12 @@ export function CustomTable<T extends RowData>({
                 </th>
               )
             })}
-            {/* Add-column "+", now the trailing cell of the coordinate-letter
-                row so it is ALWAYS visible — even when the name-header row is
-                hidden on a fresh blank sheet. Each body row carries a matching
-                trailing spacer <td>, and the name-header row (when shown) an
-                empty trailing <th>, so the grid stays aligned. */}
+            {/* Trailing spacer when add-column is wired, so the grid stays
+                aligned with body rows that also carry a spacer <td>. */}
             {onAddColumn ? (
               <th
-                className="bg-white border border-slate-200 p-0 align-middle"
+                aria-hidden="true"
+                className="bg-white border border-slate-200"
                 style={{
                   position: 'sticky',
                   top: headerRowTops[0] ?? 0,
@@ -1669,17 +1834,7 @@ export function CustomTable<T extends RowData>({
                   width: 40,
                   minWidth: 40,
                 }}
-              >
-                <button
-                  type="button"
-                  className="icon-btn-sm icon-btn-plain"
-                  title="Add column"
-                  aria-label="Add column"
-                  onClick={onAddColumn}
-                >
-                  <Plus size={16} aria-hidden="true" />
-                </button>
-              </th>
+              />
             ) : null}
           </tr>
           {showNameHeaderRow && table.getHeaderGroups().map((headerGroup, headerRowIndex) => (
@@ -2020,34 +2175,6 @@ export function CustomTable<T extends RowData>({
               separatorTop: i === 0,
             }),
           )}
-          {/* Full-width "+ Add row" bar, spanning the whole grid (gutter + every
-              leaf column + the add-column slot). The button sticks to the left
-              edge so it stays reachable while the table scrolls sideways. */}
-          {onAddRow ? (
-            <tr>
-              <td
-                colSpan={totalColSpan}
-                className="border border-slate-200 bg-white p-0"
-              >
-                <button
-                  type="button"
-                  className="btn-ghost-sm"
-                  title="Add row"
-                  aria-label="Add row"
-                  onClick={onAddRow}
-                  style={{
-                    position: 'sticky',
-                    left: 0,
-                    border: 'none',
-                    background: 'transparent',
-                  }}
-                >
-                  <Plus size={16} aria-hidden="true" />
-                  Add row
-                </button>
-              </td>
-            </tr>
-          ) : null}
         </tbody>
         {/* No <tfoot>: the old footer just echoed column ids and read as a
             duplicate header row, confusing when the data was empty. */}
@@ -2079,6 +2206,78 @@ export function CustomTable<T extends RowData>({
           it). Unmounting on `menuAt === null` is the close. */}
       {menuAt && contextProps ? (
         <CellContextMenu {...contextProps} at={menuAt} onClose={closeMenu} />
+      ) : null}
+      {(onAddRow || onAddColumn) && !readOnly ? (
+        <div
+          className="bg-white border border-slate-200 rounded-lg shadow-sm"
+          style={{
+            position: 'absolute', bottom: 8, right: 8, zIndex: 10,
+            display: 'flex', gap: 2, alignItems: 'center', padding: '2px 4px',
+          }}
+        >
+          {bulkAddTarget && (
+            <AddMenu
+              kind={bulkAddTarget}
+              onAppend={(n) => {
+                ;(bulkAddTarget === 'row' ? onAddRow : onAddColumn)?.(n)
+              }}
+              onInsertAt={
+                bulkAddTarget === 'row' && onInsertRow
+                  ? (pos, side, count) => {
+                      const dataIdx = pos - 1
+                      onInsertRow(dataIdx, side === 'before' ? 'above' : 'below', count)
+                    }
+                  : bulkAddTarget === 'column' && onInsertColumn
+                    ? (pos, side, count) => {
+                        const leaves = table.getVisibleLeafColumns()
+                        const colIdx = Math.max(0, Math.min(pos - 1, leaves.length - 1))
+                        const columnId = leaves[colIdx]?.id
+                        if (columnId) onInsertColumn(columnId, side === 'before' ? 'left' : 'right', count)
+                      }
+                    : undefined
+              }
+              onClose={() => setBulkAddTarget(null)}
+            />
+          )}
+          {onAddRow ? (
+            <button
+              type="button"
+              title="Add row · long-press or right-click for bulk / insert"
+              aria-label="Add row"
+              className="icon-btn-sm border border-sky-200 text-sky-600 sm:hover:bg-sky-50"
+              onClick={() => {
+                if (!rowLp.didFire.current) {
+                  onAddRow()
+                }
+              }}
+              onContextMenu={(e) => { e.preventDefault(); setBulkAddTarget(bulkAddTarget === 'row' ? null : 'row') }}
+              onPointerDown={rowLp.onStart}
+              onPointerUp={rowLp.onEnd}
+              onPointerCancel={rowLp.onEnd}
+              onTouchStart={rowLp.onStart}
+              onTouchEnd={rowLp.onEnd}
+            >
+              <Rows3 size={16} />
+            </button>
+          ) : null}
+          {onAddColumn ? (
+            <button
+              type="button"
+              title="Add column · long-press or right-click for bulk / insert"
+              aria-label="Add column"
+              className="icon-btn-sm border border-emerald-200 text-emerald-600 sm:hover:bg-emerald-50"
+              onClick={() => { if (!colLp.didFire.current) onAddColumn() }}
+              onContextMenu={(e) => { e.preventDefault(); setBulkAddTarget(bulkAddTarget === 'column' ? null : 'column') }}
+              onPointerDown={colLp.onStart}
+              onPointerUp={colLp.onEnd}
+              onPointerCancel={colLp.onEnd}
+              onTouchStart={colLp.onStart}
+              onTouchEnd={colLp.onEnd}
+            >
+              <Columns3 size={16} />
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   )
