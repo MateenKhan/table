@@ -9,12 +9,14 @@
 
 @layer base {
   html,
-  body,
-  #root {
-    height: 100%;
+  body {
+    min-height: 100%;
     margin: 0;
-    /* The page itself never scrolls — only the table body does. */
-    overflow: hidden;
+  }
+
+  #root {
+    min-height: 100%;
+    margin: 0;
   }
 
   html {

@@ -3,10 +3,114 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Spreadsheet Table</title>
+
+    <!-- SEO -->
+    <title>Jugaaadi Table — Open Source React Spreadsheet Component with Formulas</title>
+    <meta name="description" content="Free, open-source React spreadsheet component with cell merging, formulas, 15+ column types, formatting, find & replace, CSV export, and a full blank-sheet mode. Built on TanStack Table v8." />
+    <link rel="canonical" href="https://table.jugaaadi.com/" />
+    <meta name="robots" content="index, follow" />
+    <meta name="author" content="Mateen Khan" />
+    <meta name="theme-color" content="#0ea5e9" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Jugaaadi Table — React Spreadsheet Component" />
+    <meta property="og:description" content="Free, open-source spreadsheet for React with formulas, merge cells, column types, and CSV export." />
+    <meta property="og:image" content="https://table.jugaaadi.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:url" content="https://table.jugaaadi.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Jugaaadi" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Jugaaadi Table — React Spreadsheet Component" />
+    <meta name="twitter:description" content="Free, open-source spreadsheet for React with formulas, merge cells, column types, and CSV export." />
+    <meta name="twitter:image" content="https://table.jugaaadi.com/og-image.png" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- JSON-LD: SoftwareApplication -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Jugaaadi Table",
+        "description": "A world-class, spreadsheet-style data table for React built on TanStack Table v8 — editable cells, formulas, rich column types, borders/formatting, find & replace, shareable views, and a build-your-own blank sheet.",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Any",
+        "url": "https://table.jugaaadi.com",
+        "codeRepository": "https://github.com/MateenKhan/table",
+        "programmingLanguage": ["TypeScript", "React"],
+        "softwareVersion": "0.3.0",
+        "license": "https://opensource.org/licenses/MIT",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "author": {
+          "@type": "Person",
+          "name": "Mateen Khan",
+          "url": "https://github.com/MateenKhan"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "Jugaaadi",
+          "url": "https://jugaaadi.com"
+        }
+      }
+    </script>
+
+    <!-- JSON-LD: Organization -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "Jugaaadi",
+        "url": "https://jugaaadi.com",
+        "sameAs": [
+          "https://github.com/MateenKhan",
+          "https://www.npmjs.com/package/@jugaaadi/table"
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- Noscript fallback for crawlers and non-JS browsers -->
+    <noscript>
+      <div style="max-width: 720px; margin: 2rem auto; padding: 0 1rem; font-family: system-ui, sans-serif; line-height: 1.6;">
+        <h1>Jugaaadi Table — Open Source React Spreadsheet Component</h1>
+        <p>A world-class, spreadsheet-style data table for React built on TanStack Table v8.</p>
+        <h2>Features</h2>
+        <ul>
+          <li>Editable cells with 15+ column types (text, number, date, select, checkbox, rating, currency, and more)</li>
+          <li>Formula engine with cross-sheet references using @</li>
+          <li>Cell merging (colspan &amp; rowspan)</li>
+          <li>Rich formatting — background/text colors, borders, fonts, bold/italic/underline</li>
+          <li>Find &amp; replace across sheets</li>
+          <li>CSV export and import</li>
+          <li>Undo/redo with full history</li>
+          <li>Column pinning, sorting, grouping, and resizing</li>
+          <li>Row freezing and pagination</li>
+          <li>Blank-sheet mode — build your own spreadsheet from scratch</li>
+        </ul>
+        <h2>Install</h2>
+        <pre><code>npm install @jugaaadi/table</code></pre>
+        <p>
+          <a href="https://github.com/MateenKhan/table">GitHub</a> ·
+          <a href="https://www.npmjs.com/package/@jugaaadi/table">npm</a> ·
+          MIT License
+        </p>
+      </div>
+    </noscript>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

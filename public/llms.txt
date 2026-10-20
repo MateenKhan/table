@@ -1,0 +1,34 @@
+# Jugaaadi Table
+
+> Open source React spreadsheet component built on TanStack Table v8.
+
+## What it is
+
+@jugaaadi/table is a free, MIT-licensed React component that adds spreadsheet functionality to any React application. It provides editable cells, a formula engine, cell merging, rich formatting, 15+ column types, find & replace, CSV export/import, undo/redo, and a blank-sheet mode.
+
+## Install
+
+```
+npm install @jugaaadi/table
+```
+
+## Key features
+
+- Editable cells with 15+ column types (text, number, date, select, checkbox, rating, currency, percentage, email, URL, phone, image, file, color, progress)
+- Formula engine with cross-sheet references using @ syntax
+- Cell merging (colspan and rowspan)
+- Rich formatting: background/text colors, borders, fonts, bold/italic/underline, text alignment
+- Find & replace across sheets
+- CSV export and import
+- Undo/redo with full history
+- Column pinning, sorting, grouping, resizing
+- Row freezing and pagination
+- Blank-sheet mode for building spreadsheets from scratch
+- List mode for read-only tabular display with horizontal scrolling
+
+## Links
+
+- Demo: https://table.jugaaadi.com
+- GitHub: https://github.com/MateenKhan/table
+- npm: https://www.npmjs.com/package/@jugaaadi/table
+- License: MIT

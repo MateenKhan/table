@@ -1,0 +1,77 @@
+# Jugaaadi Table — Full Reference
+
+> Open source React spreadsheet component built on TanStack Table v8.
+
+## Overview
+
+@jugaaadi/table is a free, MIT-licensed React component that turns any React application into a full spreadsheet experience. It builds on TanStack Table v8 for core table logic and adds a rich editing layer with formulas, formatting, cell merging, and more.
+
+Version: 0.3.0
+Author: Mateen Khan
+License: MIT
+Peer dependency: React 18+
+
+## Installation
+
+```bash
+npm install @jugaaadi/table
+# or
+yarn add @jugaaadi/table
+# or
+pnpm add @jugaaadi/table
+```
+
+## Exports
+
+- `@jugaaadi/table` — Main spreadsheet component and utilities
+- `@jugaaadi/table/list` — Read-only list/table mode with horizontal scrolling
+- `@jugaaadi/table/style.css` — Required styles for the spreadsheet
+- `@jugaaadi/table/list.css` — Styles for list mode
+
+## Column Types (15+)
+
+text, number, date, select, multi-select, checkbox, rating, currency, percentage, email, URL, phone, image, file, color, progress
+
+Each column type has built-in rendering, editing, validation, and sorting.
+
+## Formula Engine
+
+- Standard spreadsheet formulas: SUM, AVERAGE, COUNT, MIN, MAX, IF, CONCATENATE, and more
+- Cell references: A1, B2:D5 (ranges)
+- Cross-sheet references using @ syntax: @Sheet2!A1
+- Auto-recalculation on cell changes
+
+## Cell Merging
+
+- Merge cells across rows and columns (colspan + rowspan)
+- Visual merge/unmerge controls in the toolbar
+- MergeRegion model tracks merged areas
+
+## Formatting
+
+- Background colors and text colors (full color picker)
+- Borders (top, right, bottom, left, all, none)
+- Font family and font size
+- Bold, italic, underline
+- Text alignment (left, center, right)
+- Number formatting
+
+## Features
+
+- **Find & Replace**: Search across all sheets, replace individual or all matches
+- **CSV Export/Import**: Full CSV support with proper escaping
+- **Undo/Redo**: Complete action history
+- **Column Operations**: Pin, sort, group, resize, reorder
+- **Row Operations**: Freeze rows, add/delete rows, pagination
+- **Blank Sheet Mode**: Start with an empty spreadsheet grid
+- **Context Menu**: Right-click for cell operations
+- **Selection**: Single cell, range, row, column, and multi-selection
+- **Copy/Paste**: Clipboard support for cells and ranges
+- **List Mode**: Read-only tabular display with horizontal wheel scrolling, column formatting, expandable rows
+
+## Links
+
+- Demo: https://table.jugaaadi.com
+- GitHub: https://github.com/MateenKhan/table
+- npm: https://www.npmjs.com/package/@jugaaadi/table
+- Issues: https://github.com/MateenKhan/table/issues

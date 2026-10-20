@@ -1,0 +1,21 @@
+{
+  "name": "Jugaaadi Table",
+  "short_name": "Table",
+  "description": "Open source React spreadsheet component with formulas, cell merging, and 15+ column types.",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0ea5e9",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "type": "image/png",
+      "sizes": "180x180"
+    }
+  ]
+}
