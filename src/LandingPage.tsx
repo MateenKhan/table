@@ -21,18 +21,18 @@ import {
 } from 'lucide-react'
 
 const FEATURES = [
-  { icon: Table2, title: 'Editable Cells', desc: '15+ column types — text, number, date, select, checkbox, rating, currency, percentage, email, URL, phone, image, file, color, progress.' },
-  { icon: Calculator, title: 'Formula Engine', desc: 'SUM, AVERAGE, COUNT, IF, CONCATENATE and more. Cross-sheet references with @ syntax. Auto-recalculation.' },
-  { icon: Merge, title: 'Cell Merging', desc: 'Merge cells across rows and columns with visual controls. Full colspan and rowspan support.' },
-  { icon: Paintbrush, title: 'Rich Formatting', desc: 'Background and text colors, borders, fonts, bold/italic/underline, text alignment, number formatting.' },
-  { icon: Search, title: 'Find & Replace', desc: 'Search across all sheets. Replace individual matches or all at once.' },
-  { icon: Download, title: 'CSV Export & Import', desc: 'Full CSV support with proper escaping. Export your data or import from existing spreadsheets.' },
-  { icon: Undo2, title: 'Undo / Redo', desc: 'Complete action history. Never lose work — step back and forward through every change.' },
-  { icon: Pin, title: 'Column Pinning', desc: 'Pin columns to the left or right edge. Sort, group, resize, and reorder columns freely.' },
-  { icon: Rows3, title: 'Row Freezing', desc: 'Freeze header rows in place. Pagination with configurable page sizes.' },
-  { icon: FileSpreadsheet, title: 'Blank Sheet Mode', desc: 'Start from scratch — build your own spreadsheet with custom columns and data.' },
-  { icon: Columns3, title: 'List Mode', desc: 'Read-only tabular display with horizontal wheel scrolling, column formatting, and expandable rows.' },
-  { icon: GripVertical, title: 'Row Drag & Drop', desc: 'Reorder rows by dragging. Supports multi-row selection and batch reordering.' },
+  { icon: Table2, title: 'Editable Cells', desc: '15+ built-in column types including text, number, date, select, checkbox, rating, currency, percentage, email, URL, phone, image, file, color, and progress. Each type has custom rendering, validation, and inline editing.' },
+  { icon: Calculator, title: 'Formula Engine', desc: 'Supports SUM, AVERAGE, COUNT, MIN, MAX, IF, CONCATENATE, and more. Reference cells across sheets using the @ syntax (e.g. @Sheet2!A1). Formulas auto-recalculate when dependencies change.' },
+  { icon: Merge, title: 'Cell Merging', desc: 'Merge cells across rows and columns using the toolbar button or right-click context menu. Full colspan and rowspan support with proper rendering at any table size.' },
+  { icon: Paintbrush, title: 'Rich Formatting', desc: 'Apply background and text colors, border styles, font families, bold/italic/underline, and text alignment. Number formatting for currency, percentages, and custom patterns.' },
+  { icon: Search, title: 'Find & Replace', desc: 'Search across all sheets in the workbook and navigate between matches. Replace individual occurrences or perform bulk replacements across the entire dataset.' },
+  { icon: Download, title: 'CSV Export & Import', desc: 'One-click CSV export with proper value escaping for safe data interchange. Import CSV files directly to populate the table. Handles special characters and multiline cell values.' },
+  { icon: Undo2, title: 'Undo / Redo', desc: 'Complete action history with unlimited undo and redo. Every cell edit, formatting change, merge operation, and structural change is tracked and reversible.' },
+  { icon: Pin, title: 'Column Pinning & Sorting', desc: 'Pin columns to the left or right edge so they stay visible during horizontal scroll. Sort by any column, group rows by values, and resize column widths freely.' },
+  { icon: Rows3, title: 'Row Freezing & Pagination', desc: 'Freeze header rows so they remain visible as users scroll vertically. Built-in pagination with configurable page sizes for large datasets.' },
+  { icon: FileSpreadsheet, title: 'Blank Sheet Mode', desc: 'Start from an empty spreadsheet and build your own structure. Add columns with any type, enter data freely, and apply formulas — like a mini Excel inside your React app.' },
+  { icon: Columns3, title: 'List Mode', desc: 'A read-only tabular display mode with horizontal wheel scrolling, column-specific formatting, and expandable detail rows. Ideal for dashboards and data presentation views.' },
+  { icon: GripVertical, title: 'Row Drag & Drop', desc: 'Reorder rows by dragging handles. Supports multi-row selection for batch reordering. Visual drop indicators show the exact insertion point during the drag.' },
 ]
 
 const FAQS: { q: string; a: string }[] = [
@@ -119,6 +119,12 @@ export default function LandingPage({ children }: { children: React.ReactNode })
             <CopyInstallButton />
             <div className="flex gap-3">
               <a
+                href="/docs/intro/"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-sky-600 transition hover:bg-sky-50"
+              >
+                Get Started
+              </a>
+              <a
                 href="https://github.com/MateenKhan/table"
                 target="_blank"
                 rel="noopener noreferrer"
@@ -139,8 +145,29 @@ export default function LandingPage({ children }: { children: React.ReactNode })
         </div>
       </header>
 
-      {/* Demo */}
+      {/* Main content */}
       <main>
+        {/* Intro */}
+        <section className="px-4 py-10 sm:py-12 bg-white">
+          <div className="mx-auto max-w-3xl text-center">
+            <p className="text-base sm:text-lg leading-relaxed text-gray-700">
+              <strong>Jugaaadi Table</strong> is an open-source React data grid and editable table
+              component that brings spreadsheet-level functionality to your React app. It supports
+              formulas with cross-sheet references, cell merging, 15+ column types, rich formatting,
+              find &amp; replace, CSV export, undo/redo, and a blank-sheet mode for building
+              spreadsheets from scratch. Written in TypeScript and built on{' '}
+              <a href="https://tanstack.com/table" target="_blank" rel="noopener noreferrer" className="text-sky-600 hover:underline">TanStack Table v8</a>,
+              it works with Next.js, Remix, Vite, and any React framework.
+            </p>
+            <nav className="mt-4 flex flex-wrap justify-center gap-4 text-sm" aria-label="Quick links">
+              <a href="/docs/" className="text-sky-600 font-medium hover:underline">Documentation</a>
+              <a href="/docs/intro/" className="text-sky-600 font-medium hover:underline">Getting Started</a>
+              <a href="/docs/integrating/" className="text-sky-600 font-medium hover:underline">Integration Guide</a>
+            </nav>
+          </div>
+        </section>
+
+        {/* Demo */}
         <section className="px-2 sm:px-4 py-6">
           <h2 className="text-center text-2xl font-semibold text-gray-800 mb-4">
             Interactive Demo
@@ -239,6 +266,8 @@ function App() {
             <span>Built by <a href="https://github.com/MateenKhan" target="_blank" rel="noopener noreferrer" className="text-sky-600 hover:underline">Mateen Khan</a></span>
           </div>
           <div className="flex items-center gap-4">
+            <a href="/docs/" className="hover:text-gray-700 transition-colors">Docs</a>
+            <a href="/docs/intro/" className="hover:text-gray-700 transition-colors">Getting Started</a>
             <a href="https://github.com/MateenKhan/table" target="_blank" rel="noopener noreferrer" className="hover:text-gray-700 transition-colors">GitHub</a>
             <a href="https://www.npmjs.com/package/@jugaaadi/table" target="_blank" rel="noopener noreferrer" className="hover:text-gray-700 transition-colors">npm</a>
             <a href="https://jugaaadi.com" target="_blank" rel="noopener noreferrer" className="hover:text-gray-700 transition-colors">jugaaadi.com</a>

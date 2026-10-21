@@ -22,6 +22,7 @@ const config: Config = {
   organizationName: 'MateenKhan',
   projectName: 'table',
 
+  trailingSlash: true,
   onBrokenLinks: 'throw',
 
   i18n: { defaultLocale: 'en', locales: ['en'] },

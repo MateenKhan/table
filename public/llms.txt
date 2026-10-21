@@ -28,7 +28,9 @@ npm install @jugaaadi/table
 
 ## Links
 
-- Demo: https://table.jugaaadi.com
-- GitHub: https://github.com/MateenKhan/table
-- npm: https://www.npmjs.com/package/@jugaaadi/table
+- [Live Demo](https://table.jugaaadi.com/)
+- [Documentation](https://table.jugaaadi.com/docs/)
+- [Getting Started](https://table.jugaaadi.com/docs/intro/)
+- [GitHub Repository](https://github.com/MateenKhan/table)
+- [npm Package](https://www.npmjs.com/package/@jugaaadi/table)
 - License: MIT

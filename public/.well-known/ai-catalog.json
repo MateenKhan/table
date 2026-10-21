@@ -1,37 +1,40 @@
 {
-  "schema_version": "1.0",
-  "name": "Jugaaadi Table",
-  "description": "Open source React spreadsheet component built on TanStack Table v8 with formulas, cell merging, 15+ column types, formatting, find & replace, CSV export, and blank-sheet mode.",
-  "url": "https://table.jugaaadi.com",
-  "category": "Developer Tools",
-  "subcategory": "React Components",
-  "license": "MIT",
-  "pricing": "Free",
-  "platforms": ["Web", "React"],
-  "features": [
-    "Editable cells",
-    "Formula engine with cross-sheet references",
-    "Cell merging (colspan/rowspan)",
-    "15+ column types",
-    "Rich formatting (colors, borders, fonts)",
-    "Find & replace",
-    "CSV export/import",
-    "Undo/redo",
-    "Column pinning, sorting, grouping",
-    "Row freezing and pagination",
-    "Blank-sheet mode",
-    "List mode for read-only display"
-  ],
-  "install": "npm install @jugaaadi/table",
-  "links": {
-    "demo": "https://table.jugaaadi.com",
-    "repository": "https://github.com/MateenKhan/table",
-    "npm": "https://www.npmjs.com/package/@jugaaadi/table",
-    "issues": "https://github.com/MateenKhan/table/issues"
-  },
-  "author": {
-    "name": "Mateen Khan",
-    "github": "https://github.com/MateenKhan"
-  },
-  "llms_txt": "https://table.jugaaadi.com/llms.txt"
+  "specVersion": "1.0",
+  "entries": [
+    {
+      "name": "Jugaaadi Table",
+      "description": "Open-source React spreadsheet component built on TanStack Table v8 with formulas, cell merging, 15+ column types, rich formatting, find & replace, CSV export, and blank-sheet mode.",
+      "url": "https://table.jugaaadi.com/",
+      "category": "Developer Tools",
+      "license": "MIT",
+      "pricing": "Free",
+      "platforms": ["Web", "React"],
+      "capabilities": [
+        "Editable cells with 15+ column types",
+        "Formula engine with cross-sheet references",
+        "Cell merging (colspan/rowspan)",
+        "Rich formatting (colors, borders, fonts)",
+        "Find & replace across sheets",
+        "CSV export/import",
+        "Undo/redo with full history",
+        "Column pinning, sorting, grouping, resizing",
+        "Row freezing and pagination",
+        "Blank-sheet mode",
+        "List mode for read-only display",
+        "Row drag & drop"
+      ],
+      "install": "npm install @jugaaadi/table",
+      "links": {
+        "documentation": "https://table.jugaaadi.com/docs/",
+        "repository": "https://github.com/MateenKhan/table",
+        "package": "https://www.npmjs.com/package/@jugaaadi/table",
+        "issues": "https://github.com/MateenKhan/table/issues",
+        "llms_txt": "https://table.jugaaadi.com/llms.txt"
+      },
+      "author": {
+        "name": "Mateen Khan",
+        "url": "https://github.com/MateenKhan"
+      }
+    }
+  ]
 }
