@@ -140,28 +140,53 @@
     <noscript>
       <div style="max-width: 720px; margin: 2rem auto; padding: 0 1rem; font-family: system-ui, sans-serif; line-height: 1.6;">
         <h1>Jugaaadi Table — Open Source React Spreadsheet Component</h1>
-        <p>Jugaaadi Table is an open-source React data grid and editable table component that brings spreadsheet-level functionality to your React app. Written in TypeScript and built on TanStack Table v8, it works with Next.js, Remix, Vite, and any React framework.</p>
+        <p>Jugaaadi Table is an open-source React data grid and editable table component that brings spreadsheet-level functionality to your React app. It supports formulas with cross-sheet references, cell merging, 15+ column types, rich formatting, find &amp; replace, CSV export, undo/redo, and a blank-sheet mode. Written in TypeScript and built on <a href="https://tanstack.com/table">TanStack Table v8</a>, it works with Next.js, Remix, Vite, and any React framework.</p>
+
         <h2>Features</h2>
+        <h3>Editable Cells</h3>
+        <p>15+ built-in column types including text, number, date, select, checkbox, rating, currency, percentage, email, URL, phone, image, file, color, and progress. Each type has custom rendering, validation, and inline editing.</p>
+        <h3>Formula Engine</h3>
+        <p>Supports SUM, AVERAGE, COUNT, MIN, MAX, IF, CONCATENATE, and more. Reference cells across sheets using the @ syntax (e.g. @Sheet2!A1). Formulas auto-recalculate when dependencies change.</p>
+        <h3>Cell Merging</h3>
+        <p>Merge cells across rows and columns using the toolbar button or right-click context menu. Full colspan and rowspan support with proper rendering at any table size.</p>
+        <h3>Rich Formatting</h3>
+        <p>Apply background and text colors, border styles, font families, bold/italic/underline, and text alignment. Number formatting for currency, percentages, and custom patterns.</p>
+        <h3>Find &amp; Replace</h3>
+        <p>Search across all sheets in the workbook and navigate between matches. Replace individual occurrences or perform bulk replacements across the entire dataset.</p>
+        <h3>CSV Export &amp; Import</h3>
+        <p>One-click CSV export with proper value escaping for safe data interchange. Import CSV files directly to populate the table.</p>
+        <h3>More Features</h3>
         <ul>
-          <li>Editable cells with 15+ column types (text, number, date, select, checkbox, rating, currency, and more)</li>
-          <li>Formula engine with cross-sheet references using @</li>
-          <li>Cell merging (colspan &amp; rowspan)</li>
-          <li>Rich formatting — background/text colors, borders, fonts, bold/italic/underline</li>
-          <li>Find &amp; replace across sheets</li>
-          <li>CSV export and import</li>
-          <li>Undo/redo with full history</li>
+          <li>Undo/redo with unlimited history — every edit, format change, and merge is tracked and reversible</li>
           <li>Column pinning, sorting, grouping, and resizing</li>
-          <li>Row freezing and pagination</li>
-          <li>Blank-sheet mode — build your own spreadsheet from scratch</li>
+          <li>Row freezing and pagination with configurable page sizes</li>
+          <li>Blank-sheet mode — start from an empty spreadsheet and build your own structure</li>
+          <li>List mode — read-only tabular display with horizontal scrolling and expandable rows</li>
+          <li>Row drag &amp; drop with multi-row selection for batch reordering</li>
         </ul>
+
+        <h2>Frequently Asked Questions</h2>
+        <h3>Is Jugaaadi Table free to use?</h3>
+        <p>Yes. Jugaaadi Table is completely free and open source under the MIT license. You can use it in personal and commercial projects without restrictions.</p>
+        <h3>Does it support formulas like Excel?</h3>
+        <p>Yes. The built-in formula engine supports SUM, AVERAGE, COUNT, MIN, MAX, IF, CONCATENATE, and more. You can also reference cells across sheets using the @ syntax.</p>
+        <h3>Does it work with Next.js?</h3>
+        <p>Yes. Jugaaadi Table is a standard React component that works with Next.js, Remix, Vite, Create React App, and any other React framework.</p>
+        <h3>How many rows can it handle?</h3>
+        <p>Jugaaadi Table uses virtualization and pagination to handle large datasets efficiently. The demo loads 1,000 rows, but it can handle tens of thousands with pagination enabled.</p>
+        <h3>Is it built on TanStack Table?</h3>
+        <p>Yes. Jugaaadi Table extends TanStack Table v8 with a rich editing layer — formulas, formatting, cell merging, and more — while keeping the full power of TanStack's sorting, filtering, grouping, and pagination.</p>
+
         <h2>Install</h2>
         <pre><code>npm install @jugaaadi/table</code></pre>
+
         <p>
           <a href="/docs/">Documentation</a> ·
           <a href="/docs/intro/">Getting Started</a> ·
           <a href="/docs/integrating/">Integration Guide</a> ·
           <a href="https://github.com/MateenKhan/table">GitHub</a> ·
           <a href="https://www.npmjs.com/package/@jugaaadi/table">npm</a> ·
+          Built by <a href="https://github.com/MateenKhan">Mateen Khan</a> ·
           MIT License
         </p>
       </div>

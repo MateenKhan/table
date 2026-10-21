@@ -269,6 +269,7 @@ function App() {
             <a href="/docs/" className="hover:text-gray-700 transition-colors">Docs</a>
             <a href="/docs/intro/" className="hover:text-gray-700 transition-colors">Getting Started</a>
             <a href="https://github.com/MateenKhan/table" target="_blank" rel="noopener noreferrer" className="hover:text-gray-700 transition-colors">GitHub</a>
+            <a href="https://github.com/MateenKhan/table/issues" target="_blank" rel="noopener noreferrer" className="hover:text-gray-700 transition-colors">Issues</a>
             <a href="https://www.npmjs.com/package/@jugaaadi/table" target="_blank" rel="noopener noreferrer" className="hover:text-gray-700 transition-colors">npm</a>
             <a href="https://jugaaadi.com" target="_blank" rel="noopener noreferrer" className="hover:text-gray-700 transition-colors">jugaaadi.com</a>
           </div>
