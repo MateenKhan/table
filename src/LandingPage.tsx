@@ -240,6 +240,62 @@ function App() {
           </div>
         </section>
 
+        {/* Comparison */}
+        <section className="px-4 py-12 sm:py-16">
+          <div className="mx-auto max-w-4xl">
+            <h2 className="text-center text-2xl sm:text-3xl font-semibold text-gray-800 mb-8">
+              How It Compares
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+                <thead>
+                  <tr className="bg-gray-50 text-left text-gray-700 font-semibold">
+                    <th className="px-4 py-3 border-b border-gray-200">Feature</th>
+                    <th className="px-4 py-3 border-b border-gray-200 text-sky-600">Jugaaadi Table</th>
+                    <th className="px-4 py-3 border-b border-gray-200">AG Grid</th>
+                    <th className="px-4 py-3 border-b border-gray-200">Handsontable</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-600">
+                  {[
+                    ['License', 'MIT (fully free)', 'Free tier + paid Enterprise', 'Free for eval, paid for production'],
+                    ['Formula engine', 'Built-in (SUM, IF, cross-sheet)', 'Not included', 'HyperFormula add-on'],
+                    ['Cell merging', 'Built-in (colspan + rowspan)', 'Enterprise only', 'Built-in'],
+                    ['Column types', '15+ (rating, currency, progress…)', 'Custom via renderers', '~10 built-in'],
+                    ['Undo / Redo', 'Full history out of the box', 'Enterprise only', 'Built-in'],
+                    ['Bundle size', '~180 KB (without demo data)', '~300 KB (community)', '~400 KB'],
+                    ['Built on', 'TanStack Table v8', 'Custom engine', 'Custom engine'],
+                    ['TypeScript', 'First-class', 'Supported', 'Supported'],
+                  ].map(([feature, jt, ag, hot]) => (
+                    <tr key={feature} className="border-b border-gray-100 last:border-0">
+                      <td className="px-4 py-2.5 font-medium text-gray-800">{feature}</td>
+                      <td className="px-4 py-2.5">{jt}</td>
+                      <td className="px-4 py-2.5">{ag}</td>
+                      <td className="px-4 py-2.5">{hot}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-4 text-center text-sm text-gray-500">
+              Jugaaadi Table is ideal when you need spreadsheet features like formulas and cell merging without a commercial license.
+            </p>
+          </div>
+        </section>
+
+        {/* Author */}
+        <section className="px-4 py-10 sm:py-12 bg-white">
+          <div className="mx-auto max-w-2xl text-center">
+            <h2 className="text-xl font-semibold text-gray-800 mb-3">Built by Mateen Khan</h2>
+            <p className="text-sm leading-relaxed text-gray-600">
+              Full-stack developer focused on developer tools and open-source React components.
+              Jugaaadi Table started as a need for a truly free spreadsheet component with formula support
+              and grew into a full-featured data grid. Contributions and feedback are welcome on{' '}
+              <a href="https://github.com/MateenKhan/table" target="_blank" rel="noopener noreferrer" className="text-sky-600 hover:underline">GitHub</a>.
+            </p>
+          </div>
+        </section>
+
         {/* FAQ */}
         <section className="px-4 py-12 sm:py-16 bg-gray-50">
           <div className="mx-auto max-w-2xl">

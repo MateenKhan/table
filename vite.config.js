@@ -21,9 +21,6 @@ export default defineConfig(({ command }) => {
       rollupReplace({
         preventAssignment: true,
         values: {
-          // These were pinned to development unconditionally, which shipped the
-          // React development build — dev warnings and all — in every
-          // production bundle. Follow the actual mode instead.
           __DEV__: JSON.stringify(!isBuild),
           'process.env.NODE_ENV': JSON.stringify(
             isBuild ? 'production' : 'development',
@@ -32,5 +29,17 @@ export default defineConfig(({ command }) => {
       }),
       react(),
     ],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'react-vendor': ['react', 'react-dom'],
+            'tanstack': ['@tanstack/react-table'],
+            'faker': ['@faker-js/faker'],
+            'framer': ['framer-motion'],
+          },
+        },
+      },
+    },
   }
 })
