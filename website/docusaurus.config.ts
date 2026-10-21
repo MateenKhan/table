@@ -11,7 +11,7 @@ const DEMO = 'https://table.jugaaadi.com/';
 const config: Config = {
   title: '@jugaaadi/table',
   tagline:
-    'A spreadsheet-style data table for React — editable cells, formulas, rich column types and a query builder',
+    'A spreadsheet-style data table for React with editable cells, formulas, rich column types, and a query builder.',
   favicon: '/favicon.svg',
 
   future: { v4: true },

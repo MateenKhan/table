@@ -2,39 +2,17 @@
   "specVersion": "1.0",
   "entries": [
     {
-      "name": "Jugaaadi Table",
-      "description": "Open-source React spreadsheet component built on TanStack Table v8 with formulas, cell merging, 15+ column types, rich formatting, find & replace, CSV export, and blank-sheet mode.",
-      "url": "https://table.jugaaadi.com/",
-      "category": "Developer Tools",
-      "license": "MIT",
-      "pricing": "Free",
-      "platforms": ["Web", "React"],
-      "capabilities": [
-        "Editable cells with 15+ column types",
-        "Formula engine with cross-sheet references",
-        "Cell merging (colspan/rowspan)",
-        "Rich formatting (colors, borders, fonts)",
-        "Find & replace across sheets",
-        "CSV export/import",
-        "Undo/redo with full history",
-        "Column pinning, sorting, grouping, resizing",
-        "Row freezing and pagination",
-        "Blank-sheet mode",
-        "List mode for read-only display",
-        "Row drag & drop"
-      ],
-      "install": "npm install @jugaaadi/table",
-      "links": {
-        "documentation": "https://table.jugaaadi.com/docs/",
-        "repository": "https://github.com/MateenKhan/table",
-        "package": "https://www.npmjs.com/package/@jugaaadi/table",
-        "issues": "https://github.com/MateenKhan/table/issues",
-        "llms_txt": "https://table.jugaaadi.com/llms.txt"
-      },
-      "author": {
-        "name": "Mateen Khan",
-        "url": "https://github.com/MateenKhan"
-      }
+      "identifier": "urn:air:jugaaadi.com:table-docs",
+      "displayName": "Jugaaadi Table Documentation",
+      "type": "documentation",
+      "description": "Open-source React spreadsheet and data grid component built on TanStack Table v8 with formulas, cell merging, 15+ column types, rich formatting, and CSV export.",
+      "url": "https://table.jugaaadi.com/docs/",
+      "representativeQueries": [
+        "How do I add a spreadsheet to my React app?",
+        "React table component with formula support",
+        "Open source alternative to AG Grid for React",
+        "How to merge cells in a React data grid"
+      ]
     }
   ]
 }

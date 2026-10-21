@@ -45,7 +45,6 @@
             "url": "https://jugaaadi.com",
             "logo": "https://table.jugaaadi.com/apple-touch-icon.png",
             "sameAs": [
-              "https://github.com/MateenKhan",
               "https://www.npmjs.com/package/@jugaaadi/table"
             ]
           },
@@ -53,14 +52,25 @@
             "@type": "Person",
             "@id": "https://github.com/MateenKhan#person",
             "name": "Mateen Khan",
-            "url": "https://github.com/MateenKhan"
+            "url": "https://github.com/MateenKhan",
+            "sameAs": ["https://github.com/MateenKhan"]
           },
           {
             "@type": "WebSite",
             "@id": "https://table.jugaaadi.com/#website",
             "url": "https://table.jugaaadi.com/",
             "name": "Jugaaadi Table",
+            "inLanguage": "en",
             "publisher": { "@id": "https://jugaaadi.com/#organization" }
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://table.jugaaadi.com/#webpage",
+            "url": "https://table.jugaaadi.com/",
+            "name": "Jugaaadi Table — Open Source React Spreadsheet Component",
+            "isPartOf": { "@id": "https://table.jugaaadi.com/#website" },
+            "about": { "@id": "https://table.jugaaadi.com/#software" },
+            "inLanguage": "en"
           },
           {
             "@type": "SoftwareApplication",
@@ -86,9 +96,12 @@
           },
           {
             "@type": "SoftwareSourceCode",
+            "@id": "https://github.com/MateenKhan/table#source",
             "name": "Jugaaadi Table source",
             "codeRepository": "https://github.com/MateenKhan/table",
-            "programmingLanguage": ["TypeScript", "React"],
+            "programmingLanguage": "TypeScript",
+            "license": "https://opensource.org/licenses/MIT",
+            "author": { "@id": "https://github.com/MateenKhan#person" },
             "targetProduct": { "@id": "https://table.jugaaadi.com/#software" }
           }
         ]
@@ -115,7 +128,9 @@
           <p style="margin-top: 1rem; font-size: 0.875rem;">
             <a href="/docs/" style="color: #0ea5e9; margin-right: 1rem;">Documentation</a>
             <a href="/docs/intro/" style="color: #0ea5e9; margin-right: 1rem;">Getting Started</a>
-            <a href="/docs/integrating/" style="color: #0ea5e9;">Integration Guide</a>
+            <a href="/docs/integrating/" style="color: #0ea5e9; margin-right: 1rem;">Integration Guide</a>
+            <a href="https://github.com/MateenKhan/table" style="color: #0ea5e9; margin-right: 1rem;">GitHub</a>
+            <a href="https://www.npmjs.com/package/@jugaaadi/table" style="color: #0ea5e9;">npm</a>
           </p>
         </div>
       </div>
